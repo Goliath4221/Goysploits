@@ -7,13 +7,45 @@ local states = {
 	InfiniteYield = false, Voidwalk = false, AutoTP = false, AntiAFK = false,
 	Reach = false, AutoSlapple = false, MouseTP = false, Mobility = false,
 	InfiniteJump = false, AutoAbility = false, SlapFarm = false,
-	TeleportHub = false, TelAviv = false,
+	TeleportHub = false,
 }
 
 local binds = {}
 local bindingScript = nil
 local tileRefs = {}
 local panelSettingsScreens = {}
+
+-- =====================
+-- Safe Teleport Helper
+-- Moves HRP then snaps all limbs to their correct relative offsets
+-- so the character arrives fully assembled, no wobble.
+-- =====================
+local function safeTeleportCFrame(cf)
+	local char = Player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Collect relative CFrames of every BasePart before moving
+	local relCFrames = {}
+	local hrpCF = hrp.CFrame
+	for _, part in pairs(char:GetDescendants()) do
+		if part:IsA("BasePart") and part ~= hrp then
+			relCFrames[part] = hrpCF:ToObjectSpace(part.CFrame)
+		end
+	end
+
+	-- Move HRP
+	hrp.CFrame = cf
+
+	-- Snap all limbs to their correct world positions
+	local newHRPCF = hrp.CFrame
+	for part, rel in pairs(relCFrames) do
+		if part and part.Parent then
+			part.CFrame = newHRPCF:ToWorldSpace(rel)
+		end
+	end
+end
 
 -- =====================
 -- Drag Helper
@@ -82,6 +114,36 @@ local function addMinimizeButton(frame, titleBar, contentItems, titleBarPixelHei
 		end
 	end)
 	return minBtn
+end
+
+-- =====================
+-- Toast / Flash Indicator
+-- =====================
+local function showToast(msg, color)
+	color = color or Color3.fromRGB(100, 200, 100)
+	local tGui = Instance.new("ScreenGui")
+	tGui.ResetOnSpawn = false
+	tGui.Parent = CoreGui
+	local tFrame = Instance.new("Frame")
+	tFrame.Size = UDim2.new(0, 260, 0, 40)
+	tFrame.Position = UDim2.new(0.5, 0, 0.08, 0)
+	tFrame.AnchorPoint = Vector2.new(0.5, 0)
+	tFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	tFrame.BackgroundTransparency = 0.15
+	tFrame.ZIndex = 100
+	tFrame.Parent = tGui
+	local tfc = Instance.new("UICorner") tfc.CornerRadius = UDim.new(0.3, 0) tfc.Parent = tFrame
+	local tfs = Instance.new("UIStroke") tfs.Color = color tfs.Thickness = 2 tfs.Parent = tFrame
+	local tfl = Instance.new("TextLabel")
+	tfl.Size = UDim2.new(1, 0, 1, 0)
+	tfl.BackgroundTransparency = 1
+	tfl.Text = msg
+	tfl.TextColor3 = color
+	tfl.TextScaled = true
+	tfl.Font = Enum.Font.GothamBold
+	tfl.ZIndex = 101
+	tfl.Parent = tFrame
+	task.delay(2, function() tGui:Destroy() end)
 end
 
 -- =====================
@@ -474,7 +536,7 @@ end
 local function stopAutoSlapple() slappleActive=false end
 
 -- =====================
--- Auto-TP
+-- Auto-TP (safe teleport)
 -- =====================
 local autoTPActive=false local autoTPRespawnTime=0 local autoTPGui=nil
 
@@ -540,11 +602,13 @@ local function startAutoTP()
 			task.spawn(function()
 				while loopRunning and autoTPActive and loopId==thisId do
 					if not Player.Backpack:FindFirstChildOfClass("Tool") and not Player.Character:FindFirstChildOfClass("Tool") then
-						Player.Character:WaitForChild("HumanoidRootPart").CFrame=CFrame.new(Vector3.new(-1210.162353515625,329.90087890625,3.986523389816284))
-						task.wait(0.5) Player.Character:WaitForChild("HumanoidRootPart").CFrame=CFrame.new(pos) task.wait(autoTPRespawnTime)
+						safeTeleportCFrame(CFrame.new(Vector3.new(-1210.162353515625,329.90087890625,3.986523389816284)))
+						task.wait(0.5)
+						safeTeleportCFrame(CFrame.new(pos))
+						task.wait(autoTPRespawnTime)
 					else
-						Player.Character:WaitForChild("HumanoidRootPart").CFrame=CFrame.new(pos)
-						Player.Character:WaitForChild("Head").CFrame=CFrame.new(headPos) task.wait(autoTPRespawnTime)
+						safeTeleportCFrame(CFrame.new(pos))
+						task.wait(autoTPRespawnTime)
 					end
 				end
 			end)
@@ -709,7 +773,7 @@ local function doMouseTP()
 	local mouse=Player:GetMouse() local target=mouse.Hit
 	if target then
 		local hrp=Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-		if hrp then hrp.CFrame=CFrame.new(target.Position+Vector3.new(0,3,0)) end
+		if hrp then safeTeleportCFrame(CFrame.new(target.Position+Vector3.new(0,3,0))) end
 	end
 end
 
@@ -901,25 +965,198 @@ local function stopAutoAbility()
 end
 
 -- =====================
+-- Tel Aviv Island
+-- =====================
+local telAvivBuilt = false
+local telAvivParts = {}
+local TEL_AVIV_POS = Vector3.new(10000, 100, 10000)
+
+local function buildTelAviv()
+	if telAvivBuilt then return end
+	telAvivBuilt = true
+
+	local function mkPart(sz, pos, col, mat, trans)
+		local p = Instance.new("Part")
+		p.Size = sz
+		p.CFrame = CFrame.new(TEL_AVIV_POS + pos)
+		p.Color = col
+		p.Material = mat or Enum.Material.SmoothPlastic
+		p.Anchored = true
+		p.CanCollide = true
+		p.Transparency = trans or 0
+		p.Parent = workspace
+		table.insert(telAvivParts, p)
+		return p
+	end
+	local function mkCylinder(sz, pos, col, mat)
+		local p = mkPart(sz, pos, col, mat)
+		p.Shape = Enum.PartType.Cylinder
+		return p
+	end
+	local function mkSphere(sz, pos, col, mat)
+		local p = mkPart(sz, pos, col, mat)
+		p.Shape = Enum.PartType.Ball
+		return p
+	end
+
+	-- Ground
+	mkPart(Vector3.new(200,8,200), Vector3.new(0,-4,0), Color3.fromRGB(230,225,215), Enum.Material.Concrete)
+	mkPart(Vector3.new(180,1,180), Vector3.new(0,1,0), Color3.fromRGB(210,200,185), Enum.Material.Cobblestone)
+	mkPart(Vector3.new(50,1.2,180), Vector3.new(-75,1,0), Color3.fromRGB(88,157,75), Enum.Material.Grass)
+	mkPart(Vector3.new(50,1.2,180), Vector3.new(75,1,0), Color3.fromRGB(88,157,75), Enum.Material.Grass)
+	for _,z in ipairs({-89,89}) do mkPart(Vector3.new(200,2,4), Vector3.new(0,1,z), Color3.fromRGB(180,170,155), Enum.Material.SmoothPlastic) end
+	for _,x in ipairs({-89,89}) do mkPart(Vector3.new(4,2,200), Vector3.new(x,1,0), Color3.fromRGB(180,170,155), Enum.Material.SmoothPlastic) end
+
+	-- Promenade
+	mkPart(Vector3.new(18,0.4,160), Vector3.new(0,1.4,0), Color3.fromRGB(245,240,228), Enum.Material.SmoothPlastic)
+	mkPart(Vector3.new(1,0.5,160), Vector3.new(-4,1.5,0), Color3.fromRGB(0,56,184), Enum.Material.Neon)
+	mkPart(Vector3.new(1,0.5,160), Vector3.new(4,1.5,0), Color3.fromRGB(0,56,184), Enum.Material.Neon)
+
+	-- Benches
+	for _,z in ipairs({-60,-30,0,30,60}) do
+		for _,side in ipairs({-12,12}) do
+			mkPart(Vector3.new(8,1,2.5), Vector3.new(side,2.5,z), Color3.fromRGB(120,85,50), Enum.Material.Wood)
+			mkPart(Vector3.new(8,2,0.5), Vector3.new(side,4,z+(side>0 and 1 or -1)), Color3.fromRGB(120,85,50), Enum.Material.Wood)
+			for _,lx in ipairs({side-3,side+3}) do mkPart(Vector3.new(0.8,1.5,0.8), Vector3.new(lx,1.75,z), Color3.fromRGB(90,90,90), Enum.Material.Metal) end
+		end
+	end
+
+	-- Fountain
+	mkPart(Vector3.new(22,1.5,22), Vector3.new(0,2.25,0), Color3.fromRGB(220,215,200), Enum.Material.Marble)
+	mkPart(Vector3.new(18,0.5,18), Vector3.new(0,2,0), Color3.fromRGB(100,180,220), Enum.Material.Glass)
+	mkPart(Vector3.new(8,3,8), Vector3.new(0,3.5,0), Color3.fromRGB(230,225,210), Enum.Material.Marble)
+	mkPart(Vector3.new(2,10,2), Vector3.new(0,10,0), Color3.fromRGB(215,210,195), Enum.Material.Marble)
+	mkSphere(Vector3.new(4,4,4), Vector3.new(0,16,0), Color3.fromRGB(0,56,184), Enum.Material.Neon)
+	for ang=0,315,45 do
+		local r=math.rad(ang) local ox,oz=math.cos(r)*10,math.sin(r)*10
+		mkSphere(Vector3.new(1.5,1.5,1.5), Vector3.new(ox,3.5,oz), Color3.fromRGB(255,255,255), Enum.Material.SmoothPlastic)
+	end
+
+	-- Left buildings
+	for i,b in ipairs({{pos=Vector3.new(-65,0,-40),w=18,d=14,h=36},{pos=Vector3.new(-65,0,0),w=22,d=14,h=52},{pos=Vector3.new(-65,0,40),w=18,d=14,h=42}}) do
+		mkPart(Vector3.new(b.w,b.h,b.d), b.pos+Vector3.new(0,b.h/2,0), Color3.fromRGB(248,248,248), Enum.Material.SmoothPlastic)
+		mkPart(Vector3.new(b.w+2,2,b.d+2), b.pos+Vector3.new(0,b.h+1,0), Color3.fromRGB(0,56,184), Enum.Material.SmoothPlastic)
+		for floor=1,math.floor(b.h/6)-1 do
+			mkPart(Vector3.new(b.w-2,1.2,0.3), b.pos+Vector3.new(0,floor*6,-b.d/2-0.2), Color3.fromRGB(180,210,255), Enum.Material.Glass)
+			mkPart(Vector3.new(b.w-2,1.2,0.3), b.pos+Vector3.new(0,floor*6,b.d/2+0.2), Color3.fromRGB(180,210,255), Enum.Material.Glass)
+		end
+		mkPart(Vector3.new(b.w,6,2), b.pos+Vector3.new(0,3,-(b.d/2+1)), Color3.fromRGB(240,235,220), Enum.Material.Concrete)
+	end
+
+	-- Right buildings
+	for i,b in ipairs({{pos=Vector3.new(65,0,-40),w=18,d=14,h=44},{pos=Vector3.new(65,0,0),w=20,d=14,h=60},{pos=Vector3.new(65,0,40),w=18,d=14,h=38}}) do
+		mkPart(Vector3.new(b.w,b.h,b.d), b.pos+Vector3.new(0,b.h/2,0), Color3.fromRGB(248,248,248), Enum.Material.SmoothPlastic)
+		mkPart(Vector3.new(b.w+2,2,b.d+2), b.pos+Vector3.new(0,b.h+1,0), Color3.fromRGB(0,56,184), Enum.Material.SmoothPlastic)
+		for floor=1,math.floor(b.h/6)-1 do
+			mkPart(Vector3.new(b.w-2,1.2,0.3), b.pos+Vector3.new(0,floor*6,-b.d/2-0.2), Color3.fromRGB(180,210,255), Enum.Material.Glass)
+			mkPart(Vector3.new(b.w-2,1.2,0.3), b.pos+Vector3.new(0,floor*6,b.d/2+0.2), Color3.fromRGB(180,210,255), Enum.Material.Glass)
+		end
+		mkPart(Vector3.new(b.w,6,2), b.pos+Vector3.new(0,3,-(b.d/2+1)), Color3.fromRGB(240,235,220), Enum.Material.Concrete)
+	end
+
+	-- Domed building
+	mkCylinder(Vector3.new(30,20,30), Vector3.new(0,10,-70), Color3.fromRGB(245,240,225), Enum.Material.Marble)
+	mkSphere(Vector3.new(32,20,32), Vector3.new(0,26,-70), Color3.fromRGB(200,220,255), Enum.Material.Glass)
+	for ang=0,315,40 do
+		local r=math.rad(ang) local ox,oz=math.cos(r)*18,math.sin(r)*18
+		mkCylinder(Vector3.new(2,20,2), Vector3.new(ox,10,-70+oz), Color3.fromRGB(240,235,220), Enum.Material.Marble)
+	end
+	for i=1,4 do mkPart(Vector3.new(40-i*4,1.5,40-i*4), Vector3.new(0,i*1.5,-70), Color3.fromRGB(220,215,200), Enum.Material.Concrete) end
+
+	-- Flagpole
+	local pole = Instance.new("Part")
+	pole.Size = Vector3.new(1.2,50,1.2)
+	pole.CFrame = CFrame.new(TEL_AVIV_POS + Vector3.new(-80,27,-75))
+	pole.Color = Color3.fromRGB(200,200,200)
+	pole.Material = Enum.Material.Metal
+	pole.Anchored = true
+	pole.Parent = workspace
+	table.insert(telAvivParts, pole)
+
+	-- Flag parts
+	mkPart(Vector3.new(0.4,24,40), Vector3.new(-79.8,40,-75), Color3.fromRGB(255,255,255), Enum.Material.SmoothPlastic)
+	mkPart(Vector3.new(0.4,4,40), Vector3.new(-79.8,49,-75), Color3.fromRGB(0,56,184), Enum.Material.SmoothPlastic)
+	mkPart(Vector3.new(0.4,4,40), Vector3.new(-79.8,31,-75), Color3.fromRGB(0,56,184), Enum.Material.SmoothPlastic)
+
+	local starCF = CFrame.new(TEL_AVIV_POS + Vector3.new(-79.8,40,-75))
+	local s1 = Instance.new("WedgePart")
+	s1.Size = Vector3.new(0.4,9,10) s1.CFrame = starCF s1.Color = Color3.fromRGB(0,56,184)
+	s1.Material = Enum.Material.SmoothPlastic s1.Anchored = true s1.CanCollide = false s1.Parent = workspace
+	table.insert(telAvivParts, s1)
+	local s2 = Instance.new("WedgePart")
+	s2.Size = Vector3.new(0.4,9,10) s2.CFrame = starCF * CFrame.Angles(0,math.rad(180),math.rad(180))
+	s2.Color = Color3.fromRGB(0,56,184) s2.Material = Enum.Material.SmoothPlastic s2.Anchored = true s2.CanCollide = false s2.Parent = workspace
+	table.insert(telAvivParts, s2)
+
+	mkPart(Vector3.new(16,1,16), Vector3.new(-80,2,-75), Color3.fromRGB(200,190,175), Enum.Material.Cobblestone)
+
+	-- Palm trees
+	for _,side in ipairs({-1,1}) do
+		for _,z in ipairs({-70,-35,35,70}) do
+			local bx=side*55
+			local trunk=Instance.new("Part")
+			trunk.Size=Vector3.new(2,18,2) trunk.Shape=Enum.PartType.Cylinder
+			trunk.CFrame=CFrame.new(TEL_AVIV_POS+Vector3.new(bx,10,z))*CFrame.Angles(math.rad(side*4),0,0)
+			trunk.Color=Color3.fromRGB(130,90,45) trunk.Material=Enum.Material.Wood trunk.Anchored=true trunk.Parent=workspace
+			table.insert(telAvivParts,trunk)
+			mkSphere(Vector3.new(12,4,12), Vector3.new(bx,21,z), Color3.fromRGB(55,130,45), Enum.Material.Grass)
+			mkSphere(Vector3.new(8,3,8), Vector3.new(bx,24,z), Color3.fromRGB(65,150,50), Enum.Material.Grass)
+			mkSphere(Vector3.new(4,2,4), Vector3.new(bx,26,z), Color3.fromRGB(75,165,55), Enum.Material.Grass)
+		end
+	end
+
+	-- Flower beds
+	for i,z in ipairs({-75,-55,-25,25,55,75}) do
+		local col=(i%2==0) and Color3.fromRGB(0,56,184) or Color3.fromRGB(255,255,255)
+		mkPart(Vector3.new(10,0.8,4), Vector3.new(-22,1.8,z), col, Enum.Material.Neon)
+		mkPart(Vector3.new(10,0.8,4), Vector3.new(22,1.8,z), col, Enum.Material.Neon)
+	end
+
+	-- Street lamps
+	for _,z in ipairs({-70,-40,-10,20,50,80}) do
+		for _,x in ipairs({-16,16}) do
+			mkCylinder(Vector3.new(0.8,14,0.8), Vector3.new(x,8,z), Color3.fromRGB(60,60,65), Enum.Material.Metal)
+			mkPart(Vector3.new(3,1,3), Vector3.new(x,15.5,z), Color3.fromRGB(240,220,150), Enum.Material.Neon)
+		end
+	end
+
+	-- Water
+	mkPart(Vector3.new(400,2,400), Vector3.new(0,-5,0), Color3.fromRGB(30,120,200), Enum.Material.Glass)
+end
+
+local function doTelAvivTP()
+	buildTelAviv()
+	-- TP to a safe height above the ground platform (TEL_AVIV_POS.Y + 8 above island surface at Y+2)
+	local targetCF = CFrame.new(TEL_AVIV_POS + Vector3.new(0, 12, 0))
+	safeTeleportCFrame(targetCF)
+	showToast("✈ Teleported to Tel Aviv", Color3.fromRGB(100, 200, 100))
+end
+
+local function doTelAvivHomeTP()
+	safeTeleportCFrame(CFrame.new(18, 3, -14))
+	showToast("⌂ Returned Home", Color3.fromRGB(200, 150, 100))
+end
+
+-- =====================
 -- Teleport Hub
 -- =====================
 local tpHubGui = nil
 
 local TP_PLACES = {
-	{name = "Elude Maze",              id = 11828384869},
-	{name = "Barzil",                  id = nil},   -- no place ID provided
-	{name = "Icy Trials",              id = 17290438723},
-	{name = "Where Guide Resides",     id = 18550498098},
-	{name = "Binded Maze",             id = 74169485398268},
-	{name = "Four Seasons",            id = 78804514423551},
-	{name = "Find the Gloves",         id = 79885102123162},
-	{name = "Penguin Teleport Place",  id = 86643839793301},
-	{name = "Splat Battles (Paint)",   id = 90553746175288},
-	{name = "Pim's Corn Maze",         id = 92483185275059},
-	{name = "Conker Obtainment",       id = 101113181694564},
-	{name = "Zombies (Poltergeist)",   id = 103505724406848},
-	{name = "Plate Glove Obtainment",  id = 106620300132058},
-	{name = "Untitled Tag Glove",      id = 115782629143468},
+	{name = "Elude Maze",             id = 11828384869},
+	{name = "Barzil",                 id = 7234087065},
+	{name = "Icy Trials",             id = 17290438723},
+	{name = "Where Guide Resides",    id = 18550498098},
+	{name = "Binded Maze",            id = 74169485398268},
+	{name = "Four Seasons",           id = 78804514423551},
+	{name = "Find the Gloves",        id = 79885102123162},
+	{name = "Penguin Teleport Place", id = 86643839793301},
+	{name = "Splat Battles (Paint)",  id = 90553746175288},
+	{name = "Pim's Corn Maze",        id = 92483185275059},
+	{name = "Conker Obtainment",      id = 101113181694564},
+	{name = "Zombies (Poltergeist)",  id = 103505724406848},
+	{name = "Plate Glove Obtainment", id = 106620300132058},
+	{name = "Untitled Tag Glove",     id = 115782629143468},
 }
 
 local function startTeleportHub()
@@ -928,12 +1165,10 @@ local function startTeleportHub()
 	tpHubGui.ResetOnSpawn = false
 	tpHubGui.Parent = CoreGui
 
-	-- Calculate total content height: each button 28px + 4px gap
 	local btnH = 28
 	local btnGap = 4
 	local titleH = 28
-	local totalContentH = #TP_PLACES * (btnH + btnGap)
-	local frameH = math.min(titleH + totalContentH + 8, 420) -- cap at 420px, scroll internally
+	local frameH = math.min(titleH + #TP_PLACES * (btnH + btnGap) + 8, 420)
 
 	local HubFrame = Instance.new("Frame")
 	HubFrame.Size = UDim2.new(0, 200, 0, frameH)
@@ -957,7 +1192,6 @@ local function startTeleportHub()
 	HTitle.Parent = HubFrame
 	makeDraggable(HubFrame, HTitle)
 
-	-- Scrolling list of places
 	local ScrollFrame = Instance.new("ScrollingFrame")
 	ScrollFrame.Size = UDim2.new(1, -8, 0, frameH - titleH - 4)
 	ScrollFrame.Position = UDim2.new(0, 4, 0, titleH + 2)
@@ -993,41 +1227,20 @@ local function startTeleportHub()
 		btn.Parent = ScrollFrame
 		local btnC = Instance.new("UICorner") btnC.CornerRadius = UDim.new(0.15, 0) btnC.Parent = btn
 		local btnS = Instance.new("UIStroke") btnS.Color = Color3.fromRGB(65, 65, 70) btnS.Thickness = 1 btnS.Parent = btn
-
-		if place.id == nil then
-			-- No place ID: show as grayed out / unavailable
-			btn.BackgroundColor3 = Color3.fromRGB(35, 35, 38)
-			btn.TextColor3 = Color3.fromRGB(100, 100, 100)
-			btn.Text = place.name .. " (N/A)"
-		else
-			btn.MouseEnter:Connect(function()
-				btn.BackgroundColor3 = Color3.fromRGB(60, 90, 150)
-				btnS.Color = Color3.fromRGB(100, 149, 237)
+		btn.MouseEnter:Connect(function() btn.BackgroundColor3=Color3.fromRGB(60,90,150) btnS.Color=Color3.fromRGB(100,149,237) end)
+		btn.MouseLeave:Connect(function() btn.BackgroundColor3=Color3.fromRGB(45,45,50) btnS.Color=Color3.fromRGB(65,65,70) end)
+		btn.MouseButton1Click:Connect(function()
+			btn.Text="Teleporting..." btn.BackgroundColor3=Color3.fromRGB(40,100,60)
+			task.spawn(function()
+				local ok,err=pcall(function() TeleportService:Teleport(place.id, Player) end)
+				if not ok then
+					btn.Text="Failed!" btn.BackgroundColor3=Color3.fromRGB(120,40,40)
+					task.wait(2) btn.Text=place.name btn.BackgroundColor3=Color3.fromRGB(45,45,50)
+				end
 			end)
-			btn.MouseLeave:Connect(function()
-				btn.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-				btnS.Color = Color3.fromRGB(65, 65, 70)
-			end)
-			btn.MouseButton1Click:Connect(function()
-				btn.Text = "Teleporting..."
-				btn.BackgroundColor3 = Color3.fromRGB(40, 100, 60)
-				task.spawn(function()
-					local ok, err = pcall(function()
-						TeleportService:Teleport(place.id, Player)
-					end)
-					if not ok then
-						btn.Text = "Failed!"
-						btn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
-						task.wait(2)
-						btn.Text = place.name
-						btn.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-					end
-				end)
-			end)
-		end
+		end)
 	end
 
-	-- Collect content items for minimize
 	local contentItems = {ScrollFrame}
 	addMinimizeButton(HubFrame, HTitle, contentItems, titleH)
 end
@@ -1048,9 +1261,7 @@ local sfSteppedConnection=nil local sfLastTarget=nil
 local sfSpeedSliderRef=nil local sfSpeedBoxRef=nil local sfSpeedKnobRef=nil
 local SPAWN_CFRAME=CFrame.new(-1210.16235,329.900879,3.98652339,1,0,0,0,1,0,0,0,1)
 local SF_ROCK_GLOVES={"Diamond","MEGAROCK","CUSTOM","Spectator"}
-
-local sfWalkMoveConn=nil
-local sfWalkIsMoving=false
+local sfWalkMoveConn=nil local sfWalkIsMoving=false
 
 local function sfGetCharacter() return Player.Character end
 local function sfGetHRP() return sfGetCharacter() and sfGetCharacter():FindFirstChild("HumanoidRootPart") end
@@ -1132,86 +1343,58 @@ local sfWalkAnimTrack = nil
 local SF_WALK_ANIM = "rbxassetid://913376220"
 
 local function sfLoadWalkAnim()
-	local char = sfGetCharacter() if not char then return end
-	local hum = char:FindFirstChild("Humanoid") if not hum then return end
-	local animator = hum:FindFirstChildOfClass("Animator") if not animator then return end
+	local char=sfGetCharacter() if not char then return end
+	local hum=char:FindFirstChild("Humanoid") if not hum then return end
+	local animator=hum:FindFirstChildOfClass("Animator") if not animator then return end
 	if sfWalkAnimTrack and sfWalkAnimTrack.IsPlaying then return end
-	local anim = Instance.new("Animation")
-	anim.AnimationId = SF_WALK_ANIM
-	sfWalkAnimTrack = animator:LoadAnimation(anim)
-	sfWalkAnimTrack.Priority = Enum.AnimationPriority.Action
-	sfWalkAnimTrack.Looped = true
-	sfWalkAnimTrack:Play()
+	local anim=Instance.new("Animation") anim.AnimationId=SF_WALK_ANIM
+	sfWalkAnimTrack=animator:LoadAnimation(anim)
+	sfWalkAnimTrack.Priority=Enum.AnimationPriority.Action sfWalkAnimTrack.Looped=true sfWalkAnimTrack:Play()
 end
 
 local function sfStopWalkAnim()
-	if sfWalkAnimTrack then
-		if sfWalkAnimTrack.IsPlaying then sfWalkAnimTrack:Stop() end
-		sfWalkAnimTrack = nil
-	end
+	if sfWalkAnimTrack then if sfWalkAnimTrack.IsPlaying then sfWalkAnimTrack:Stop() end sfWalkAnimTrack=nil end
 end
 
-local sfArmHoldConn = nil
+local sfArmHoldConn=nil
 local function sfStartArmHold()
 	if sfArmHoldConn then return end
-	sfArmHoldConn = RunService.RenderStepped:Connect(function()
+	sfArmHoldConn=RunService.RenderStepped:Connect(function()
 		if not sfWalkMode or not slapFarmActive then return end
-		local char = sfGetCharacter() if not char then return end
-		local tool = char:FindFirstChildOfClass("Tool") if not tool then return end
-		local torso = char:FindFirstChild("Torso")
-		if torso then
-			local rs = torso:FindFirstChild("Right Shoulder")
-			if rs then rs.C0 = CFrame.new(1, 0.5, 0) * CFrame.Angles(math.rad(-90), math.rad(90), math.rad(90)) end
-		else
-			local upperTorso = char:FindFirstChild("UpperTorso")
-			if upperTorso then
-				local rs = upperTorso:FindFirstChild("RightShoulder")
-				if rs then rs.C0 = CFrame.new(rs.C0.Position) * CFrame.Angles(math.rad(-90), 0, 0) end
-			end
-		end
+		local char=sfGetCharacter() if not char then return end
+		local tool=char:FindFirstChildOfClass("Tool") if not tool then return end
+		local torso=char:FindFirstChild("Torso")
+		if torso then local rs=torso:FindFirstChild("Right Shoulder") if rs then rs.C0=CFrame.new(1,0.5,0)*CFrame.Angles(math.rad(-90),math.rad(90),math.rad(90)) end
+		else local upperTorso=char:FindFirstChild("UpperTorso") if upperTorso then local rs=upperTorso:FindFirstChild("RightShoulder") if rs then rs.C0=CFrame.new(rs.C0.Position)*CFrame.Angles(math.rad(-90),0,0) end end end
 	end)
 end
 
 local function sfStopArmHold()
-	if sfArmHoldConn then sfArmHoldConn:Disconnect() sfArmHoldConn = nil end
-	local char = sfGetCharacter() if not char then return end
-	local torso = char:FindFirstChild("Torso")
-	if torso then
-		local rs = torso:FindFirstChild("Right Shoulder")
-		if rs then rs.C0 = CFrame.new(1, 0.5, 0, 0, 0, 1, 0, 1, 0, -1, 0, 0) end
-	else
-		local upperTorso = char:FindFirstChild("UpperTorso")
-		if upperTorso then
-			local rs = upperTorso:FindFirstChild("RightShoulder")
-			if rs then rs.C0 = CFrame.new(1, 0.5, 0) end
-		end
-	end
+	if sfArmHoldConn then sfArmHoldConn:Disconnect() sfArmHoldConn=nil end
+	local char=sfGetCharacter() if not char then return end
+	local torso=char:FindFirstChild("Torso")
+	if torso then local rs=torso:FindFirstChild("Right Shoulder") if rs then rs.C0=CFrame.new(1,0.5,0,0,0,1,0,1,0,-1,0,0) end
+	else local upperTorso=char:FindFirstChild("UpperTorso") if upperTorso then local rs=upperTorso:FindFirstChild("RightShoulder") if rs then rs.C0=CFrame.new(1,0.5,0) end end end
 end
 
 local function sfStopWalkMovement()
 	if sfWalkMoveConn then sfWalkMoveConn:Disconnect() sfWalkMoveConn=nil end
-	sfWalkIsMoving = false
-	sfStopWalkAnim()
-	sfStopArmHold()
-	local char = sfGetCharacter() local hrp = sfGetHRP()
+	sfWalkIsMoving=false sfStopWalkAnim() sfStopArmHold()
+	local char=sfGetCharacter() local hrp=sfGetHRP()
 	if char and char:FindFirstChild("Humanoid") and hrp then char.Humanoid:MoveTo(hrp.Position) end
 end
 
 local function sfBeginWalkToTarget(p)
 	if sfWalkMoveConn then sfWalkMoveConn:Disconnect() sfWalkMoveConn=nil end
-	sfWalkIsMoving = true
-	local char = sfGetCharacter()
-	local hum = char and char:FindFirstChild("Humanoid")
+	sfWalkIsMoving=true
+	local char=sfGetCharacter() local hum=char and char:FindFirstChild("Humanoid")
 	if not hum then sfWalkIsMoving=false return end
-	sfLoadWalkAnim()
-	sfStartArmHold()
-	sfWalkMoveConn = RunService.Heartbeat:Connect(function()
+	sfLoadWalkAnim() sfStartArmHold()
+	sfWalkMoveConn=RunService.Heartbeat:Connect(function()
 		if not sfWalkIsMoving then sfWalkMoveConn:Disconnect() sfWalkMoveConn=nil return end
-		local pChar = p.Character
-		if not pChar then sfWalkIsMoving=false return end
-		local pHRP = pChar:FindFirstChild("HumanoidRootPart")
-		if not pHRP then sfWalkIsMoving=false return end
-		local hum2 = sfGetCharacter() and sfGetCharacter():FindFirstChild("Humanoid")
+		local pChar=p.Character if not pChar then sfWalkIsMoving=false return end
+		local pHRP=pChar:FindFirstChild("HumanoidRootPart") if not pHRP then sfWalkIsMoving=false return end
+		local hum2=sfGetCharacter() and sfGetCharacter():FindFirstChild("Humanoid")
 		if hum2 then hum2:MoveTo(pHRP.Position) end
 	end)
 end
@@ -1238,28 +1421,22 @@ local function startSlapFarm()
 			task.wait(0.1)
 			local char=sfGetCharacter() local hrp=sfGetHRP() local toolExists=sfHasTool()
 			if sfWalkMode then
-				if not toolExists then sfStopWalkMovement() if hrp then hrp.CFrame=SPAWN_CFRAME end continue end
+				if not toolExists then sfStopWalkMovement() if hrp then safeTeleportCFrame(SPAWN_CFRAME) end continue end
 				local tool=char and char:FindFirstChildOfClass("Tool")
 				local myTool=tool or Player.Backpack:FindFirstChildOfClass("Tool")
-				if not tool and myTool and char and char:FindFirstChild("Humanoid") then
-					char.Humanoid:EquipTool(myTool) task.wait(0.1) tool=char:FindFirstChildOfClass("Tool")
-				end
+				if not tool and myTool and char and char:FindFirstChild("Humanoid") then char.Humanoid:EquipTool(myTool) task.wait(0.1) tool=char:FindFirstChildOfClass("Tool") end
 				local targets=sfGetTargets()
 				if #targets==0 then sfStopWalkMovement() continue end
-				local p=targets[1]
-				if not sfPassesFilters(p) then sfStopWalkMovement() continue end
-				sfLastTarget=p sfTargetToFollow=p
-				sfBeginWalkToTarget(p)
+				local p=targets[1] if not sfPassesFilters(p) then sfStopWalkMovement() continue end
+				sfLastTarget=p sfTargetToFollow=p sfBeginWalkToTarget(p)
 				local timeout=tick()+5
 				repeat
-					task.wait(0.05)
-					if not slapFarmActive or not sfWalkMode then break end
+					task.wait(0.05) if not slapFarmActive or not sfWalkMode then break end
 					local pHRP2=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
 					if not pHRP2 or not sfPassesFilters(p) then break end
 					if hrp and (pHRP2.Position-hrp.Position).Magnitude<6 then break end
 				until tick()>timeout
-				if sfWalkMoveConn then sfWalkMoveConn:Disconnect() sfWalkMoveConn=nil end
-				sfWalkIsMoving=false
+				if sfWalkMoveConn then sfWalkMoveConn:Disconnect() sfWalkMoveConn=nil end sfWalkIsMoving=false
 				tool=char and char:FindFirstChildOfClass("Tool")
 				if tool then tool:Activate() if sfAntiKick then task.wait(1) else task.wait(0.1) end sfSlapFarm() task.wait(0.1) end
 				sfTargetToFollow=nil
@@ -1267,13 +1444,12 @@ local function startSlapFarm()
 				sfStopWalkMovement()
 				if not toolExists then
 					if sfFlightEnabled then sfFlightEnabled=false sfTargetToFollow=nil sfDisableFlight(char) end
-					if hrp then hrp.CFrame=SPAWN_CFRAME end continue
+					if hrp then safeTeleportCFrame(SPAWN_CFRAME) end continue
 				end
 				if not sfFlightEnabled then sfFlightEnabled=true sfEnableFlight(char) end
 				local tool=char and char:FindFirstChildOfClass("Tool") local myTool=tool or Player.Backpack:FindFirstChildOfClass("Tool")
 				if not tool and myTool then char.Humanoid:EquipTool(myTool) task.wait(0.1) end
-				local targets=sfGetTargets()
-				if #targets==0 then sfTargetToFollow=nil continue end
+				local targets=sfGetTargets() if #targets==0 then sfTargetToFollow=nil continue end
 				for _,p in pairs(targets) do
 					if not sfPassesFilters(p) then continue end
 					sfTargetToFollow=p sfLastTarget=p local followEnd=tick()+2
@@ -1292,8 +1468,7 @@ local function startSlapFarm()
 end
 
 local function stopSlapFarm()
-	slapFarmActive=false sfFlightEnabled=false sfTargetToFollow=nil sfLastTarget=nil
-	sfStopWalkMovement()
+	slapFarmActive=false sfFlightEnabled=false sfTargetToFollow=nil sfLastTarget=nil sfStopWalkMovement()
 	if sfFlightConnection then sfFlightConnection:Disconnect() sfFlightConnection=nil end
 	if sfSteppedConnection then sfSteppedConnection:Disconnect() sfSteppedConnection=nil end
 	local char=sfGetCharacter()
@@ -1305,7 +1480,6 @@ local function buildSlapFarmSettings()
 	local sg=Instance.new("ScreenGui") sg.ResetOnSpawn=false sg.Parent=CoreGui
 	panelSettingsScreens["SlapFarm"]=sg
 	local openDropdowns={}
-
 	local SP=Instance.new("Frame") SP.Size=UDim2.new(0.38,0,0,100) SP.Position=UDim2.new(0.5,0,0.5,0)
 	SP.AnchorPoint=Vector2.new(0.5,0.5) SP.BackgroundColor3=Color3.fromRGB(40,40,40) SP.BackgroundTransparency=0.1
 	SP.Visible=false SP.ZIndex=50 SP.Parent=sg
@@ -1315,7 +1489,6 @@ local function buildSlapFarmSettings()
 	SPT.BackgroundTransparency=1 SPT.Text="Slap Farm Settings" SPT.TextColor3=Color3.fromRGB(255,255,255)
 	SPT.TextScaled=true SPT.Font=Enum.Font.GothamBold SPT.ZIndex=51 SPT.Parent=SP
 	makeDraggable(SP,SPT)
-
 	local closeB=Instance.new("TextButton") closeB.Size=UDim2.new(0,22,0,22) closeB.Position=UDim2.new(1,-4,0,4)
 	closeB.AnchorPoint=Vector2.new(1,0) closeB.BackgroundColor3=Color3.fromRGB(150,50,50) closeB.Text="✕"
 	closeB.TextColor3=Color3.fromRGB(255,255,255) closeB.TextScaled=true closeB.Font=Enum.Font.GothamBold closeB.ZIndex=52 closeB.Parent=SP
@@ -1324,7 +1497,6 @@ local function buildSlapFarmSettings()
 		for _,dd in ipairs(openDropdowns) do if dd and dd.Parent then dd.Visible=false end end
 		SP.Visible=false
 	end)
-
 	local yOff=36
 	local function addLbl(txt)
 		local l=Instance.new("TextLabel") l.Size=UDim2.new(0.9,0,0,14) l.Position=UDim2.new(0.04,0,0,yOff)
@@ -1358,7 +1530,7 @@ local function buildSlapFarmSettings()
 		dropdown.BackgroundTransparency=0.1 dropdown.Visible=false dropdown.ZIndex=60 dropdown.ClipsDescendants=true dropdown.Parent=sg
 		local ddc=Instance.new("UICorner") ddc.CornerRadius=UDim.new(0.05,0) ddc.Parent=dropdown
 		local ddl=Instance.new("UIListLayout") ddl.SortOrder=Enum.SortOrder.LayoutOrder ddl.Parent=dropdown
-		table.insert(openDropdowns, dropdown)
+		table.insert(openDropdowns,dropdown)
 		local selectedSet={}
 		local function rebuildItems(opts)
 			for _,c in pairs(dropdown:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
@@ -1455,173 +1627,6 @@ local function buildSlapFarmSettings()
 end
 
 -- =====================
--- Tel Aviv Island
--- =====================
-local telAvivIslandParts = {}
-local TEL_AVIV_ORIGIN = Vector3.new(10000, 50, 10000)
-
-local function buildTelAvivIsland()
-    for _, p in ipairs(telAvivIslandParts) do
-        if p and p.Parent then p:Destroy() end
-    end
-    telAvivIslandParts = {}
-
-    local function addPart(size, pos, color, material, anchored)
-        local p = Instance.new("Part")
-        p.Size = size
-        p.CFrame = CFrame.new(TEL_AVIV_ORIGIN + pos)
-        p.Color = color
-        p.Material = material or Enum.Material.SmoothPlastic
-        p.Anchored = anchored ~= false
-        p.CanCollide = true
-        p.Parent = workspace
-        table.insert(telAvivIslandParts, p)
-        return p
-    end
-
-    -- Main island base (sand)
-    addPart(Vector3.new(120, 6, 120), Vector3.new(0, -3, 0), Color3.fromRGB(237, 210, 150), Enum.Material.Sandstone)
-
-    -- Grass top layer
-    addPart(Vector3.new(120, 2, 120), Vector3.new(0, 1, 0), Color3.fromRGB(106, 175, 90), Enum.Material.Grass)
-
-    -- Water around island
-    for _, offset in ipairs({
-        {Vector3.new(160, 2, 40), Vector3.new(-140, -3, 0)},
-        {Vector3.new(160, 2, 40), Vector3.new(140, -3, 0)},
-        {Vector3.new(40, 2, 160), Vector3.new(0, -3, -140)},
-        {Vector3.new(40, 2, 160), Vector3.new(0, -3, 140)},
-    }) do
-        addPart(offset[1], offset[2], Color3.fromRGB(0, 120, 190), Enum.Material.Glass)
-    end
-
-    -- Central white stone path
-    addPart(Vector3.new(8, 0.5, 80), Vector3.new(0, 2.5, 0), Color3.fromRGB(240, 240, 240), Enum.Material.Concrete)
-
-    -- Fountain base
-    addPart(Vector3.new(16, 2, 16), Vector3.new(0, 3, 0), Color3.fromRGB(220, 220, 220), Enum.Material.Marble)
-    -- Fountain water
-    addPart(Vector3.new(10, 1, 10), Vector3.new(0, 4.5, 0), Color3.fromRGB(100, 180, 220), Enum.Material.Glass)
-    -- Fountain center spire
-    addPart(Vector3.new(2, 6, 2), Vector3.new(0, 8, 0), Color3.fromRGB(200, 200, 200), Enum.Material.Marble)
-
-    -- Palm trees (4 corners)
-    for _, offset in ipairs({
-        Vector3.new(40, 0, 40), Vector3.new(-40, 0, 40),
-        Vector3.new(40, 0, -40), Vector3.new(-40, 0, -40)
-    }) do
-        -- trunk
-        local trunk = addPart(Vector3.new(2, 16, 2), offset + Vector3.new(0, 10, 0), Color3.fromRGB(120, 80, 40), Enum.Material.Wood)
-        trunk.Shape = Enum.PartType.Cylinder
-        -- leaves
-        addPart(Vector3.new(16, 3, 16), offset + Vector3.new(0, 19, 0), Color3.fromRGB(60, 140, 50), Enum.Material.Grass)
-    end
-
-    -- White buildings (left side)
-    for i = 1, 3 do
-        local bx = -45
-        local bz = -30 + (i-1) * 30
-        addPart(Vector3.new(14, 18 + i*4, 14), Vector3.new(bx, 10 + i*2, bz), Color3.fromRGB(245, 245, 245), Enum.Material.SmoothPlastic)
-        -- blue roof stripe
-        addPart(Vector3.new(14, 2, 14), Vector3.new(bx, 20 + i*4, bz), Color3.fromRGB(0, 56, 184), Enum.Material.SmoothPlastic)
-    end
-
-    -- White buildings (right side)
-    for i = 1, 3 do
-        local bx = 45
-        local bz = -30 + (i-1) * 30
-        addPart(Vector3.new(14, 14 + i*4, 14), Vector3.new(bx, 8 + i*2, bz), Color3.fromRGB(245, 245, 245), Enum.Material.SmoothPlastic)
-        addPart(Vector3.new(14, 2, 14), Vector3.new(bx, 16 + i*4, bz), Color3.fromRGB(0, 56, 184), Enum.Material.SmoothPlastic)
-    end
-
-    -- =====================
-    -- Israeli Flag (flagpole + flag)
-    -- =====================
-    -- Pole
-    local pole = addPart(Vector3.new(1, 40, 1), Vector3.new(-55, 22, -55), Color3.fromRGB(180, 180, 180), Enum.Material.Metal)
-    pole.Shape = Enum.PartType.Cylinder
-    pole.CFrame = CFrame.new(TEL_AVIV_ORIGIN + Vector3.new(-55, 22, -55)) * CFrame.Angles(0, 0, math.rad(90))
-    pole.CFrame = CFrame.new(TEL_AVIV_ORIGIN + Vector3.new(-55, 22, -55))
-
-    -- Flag white background
-    addPart(Vector3.new(0.3, 20, 36), Vector3.new(-54.7, 30, -55), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic)
-
-    -- Top blue stripe
-    addPart(Vector3.new(0.3, 4, 36), Vector3.new(-54.7, 38, -55), Color3.fromRGB(0, 56, 184), Enum.Material.SmoothPlastic)
-
-    -- Bottom blue stripe
-    addPart(Vector3.new(0.3, 4, 36), Vector3.new(-54.7, 22, -55), Color3.fromRGB(0, 56, 184), Enum.Material.SmoothPlastic)
-
-    -- Star of David (center) — approximated with two triangles as wedges
-    -- Top triangle wedge
-    local star1 = Instance.new("WedgePart")
-    star1.Size = Vector3.new(0.3, 7, 8)
-    star1.CFrame = CFrame.new(TEL_AVIV_ORIGIN + Vector3.new(-54.7, 30, -55)) * CFrame.Angles(0, 0, 0)
-    star1.Color = Color3.fromRGB(0, 56, 184)
-    star1.Material = Enum.Material.SmoothPlastic
-    star1.Anchored = true
-    star1.CanCollide = false
-    star1.Parent = workspace
-    table.insert(telAvivIslandParts, star1)
-
-    -- Bottom triangle wedge (inverted)
-    local star2 = Instance.new("WedgePart")
-    star2.Size = Vector3.new(0.3, 7, 8)
-    star2.CFrame = CFrame.new(TEL_AVIV_ORIGIN + Vector3.new(-54.7, 30, -55)) * CFrame.Angles(0, math.rad(180), math.rad(180))
-    star2.Color = Color3.fromRGB(0, 56, 184)
-    star2.Material = Enum.Material.SmoothPlastic
-    star2.Anchored = true
-    star2.CanCollide = false
-    star2.Parent = workspace
-    table.insert(telAvivIslandParts, star2)
-
-    -- Stone plaza at base of flag
-    addPart(Vector3.new(20, 1, 20), Vector3.new(-55, 2.5, -55), Color3.fromRGB(210, 200, 185), Enum.Material.Cobblestone)
-
-    -- Benches around plaza
-    for _, bOffset in ipairs({Vector3.new(-8, 0, 0), Vector3.new(8, 0, 0), Vector3.new(0, 0, -8), Vector3.new(0, 0, 8)}) do
-        addPart(Vector3.new(6, 1.5, 2), Vector3.new(-55, 4, -55) + bOffset, Color3.fromRGB(140, 100, 60), Enum.Material.Wood)
-    end
-
-    -- Decorative flower beds (blue and white)
-    for _, fOffset in ipairs({
-        {Vector3.new(0, 0, 30), Color3.fromRGB(0, 56, 184)},
-        {Vector3.new(0, 0, -30), Color3.fromRGB(255, 255, 255)},
-        {Vector3.new(30, 0, 0), Color3.fromRGB(0, 56, 184)},
-        {Vector3.new(-30, 0, 0), Color3.fromRGB(255, 255, 255)},
-    }) do
-        addPart(Vector3.new(10, 1, 10), fOffset[1] + Vector3.new(0, 2.5, 0), fOffset[2], Enum.Material.Neon)
-    end
-end
-
-local function destroyTelAvivIsland()
-    for _, p in ipairs(telAvivIslandParts) do
-        if p and p.Parent then p:Destroy() end
-    end
-    telAvivIslandParts = {}
-end
-
-local telAvivActive = false
-
-local function startTelAviv()
-    telAvivActive = true
-    buildTelAvivIsland()
-end
-
-local function stopTelAviv()
-    telAvivActive = false
-    destroyTelAvivIsland()
-end
-
-local function doTelAvivTP()
-    if not telAvivActive then return end
-    local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(TEL_AVIV_ORIGIN + Vector3.new(0, 10, 0))
-    end
-end
-
--- =====================
 -- Toggle Functions
 -- =====================
 local toggleFunctions = {
@@ -1637,7 +1642,6 @@ local toggleFunctions = {
 	AutoAbility   = function(on) if on then startAutoAbility() else stopAutoAbility() end end,
 	SlapFarm      = function(on) if on then startSlapFarm() else stopSlapFarm() end end,
 	TeleportHub   = function(on) if on then startTeleportHub() else stopTeleportHub() end end,
-	TelAviv 	  = function(on) if on then startTelAviv() else stopTelAviv() end end,
 }
 
 -- =====================
@@ -1656,7 +1660,8 @@ local function createScriptButton(data, grid)
 	NameLabel.TextScaled=true NameLabel.Font=Enum.Font.GothamBold NameLabel.ZIndex=11 NameLabel.Parent=Tile
 
 	local StatusLabel=Instance.new("TextLabel") StatusLabel.Size=UDim2.new(1,0,0.2,0) StatusLabel.Position=UDim2.new(0,0,0.5,0)
-	StatusLabel.BackgroundTransparency=1 StatusLabel.Text=oneShot and "Click to Load" or (runOnce and "Click to Run" or "OFF")
+	StatusLabel.BackgroundTransparency=1
+	StatusLabel.Text=oneShot and "Click to Load" or (runOnce and "Click to Run" or (key=="TelAviv" and "Click to Go" or "OFF"))
 	StatusLabel.TextColor3=Color3.fromRGB(150,150,150) StatusLabel.TextScaled=true StatusLabel.Font=Enum.Font.Gotham StatusLabel.ZIndex=11 StatusLabel.Parent=Tile
 
 	local BindLabel=Instance.new("TextButton") BindLabel.Size=UDim2.new(0.85,0,0.22,0) BindLabel.Position=UDim2.new(0.5,0,0.76,0)
@@ -1675,9 +1680,8 @@ local function createScriptButton(data, grid)
 		local ttl=Instance.new("TextLabel") ttl.Size=UDim2.new(1,0,1,0) ttl.BackgroundTransparency=1 ttl.Text=data.hoverWarning
 		ttl.TextColor3=Color3.fromRGB(255,180,180) ttl.TextScaled=true ttl.Font=Enum.Font.GothamBold ttl.ZIndex=21 ttl.Parent=tooltip
 		ClickZone.MouseEnter:Connect(function()
-			tooltip.Visible=true
-			local ap=Tile.AbsolutePosition local as=Tile.AbsoluteSize
-			tooltip.Position=UDim2.fromOffset(ap.X+as.X/2, ap.Y-4)
+			tooltip.Visible=true local ap=Tile.AbsolutePosition local as=Tile.AbsoluteSize
+			tooltip.Position=UDim2.fromOffset(ap.X+as.X/2,ap.Y-4)
 		end)
 		ClickZone.MouseLeave:Connect(function() tooltip.Visible=false end)
 	end
@@ -1694,9 +1698,22 @@ local function createScriptButton(data, grid)
 		end)
 	end
 
+	-- Tel Aviv home button
+	if key == "TelAviv" then
+		local HomeBtn=Instance.new("TextButton") HomeBtn.Size=UDim2.new(0,20,0,20)
+		HomeBtn.Position=UDim2.new(1,-2,0,2) HomeBtn.AnchorPoint=Vector2.new(1,0)
+		HomeBtn.BackgroundColor3=Color3.fromRGB(160,40,40) HomeBtn.Text="⌂"
+		HomeBtn.TextColor3=Color3.fromRGB(255,255,255) HomeBtn.TextScaled=true HomeBtn.Font=Enum.Font.GothamBold HomeBtn.ZIndex=15 HomeBtn.Parent=Tile
+		local HBC=Instance.new("UICorner") HBC.CornerRadius=UDim.new(0.3,0) HBC.Parent=HomeBtn
+		HomeBtn.MouseButton1Click:Connect(function() doTelAvivHomeTP() end)
+	end
+
 	local loaded=false
 	local function setVisual(on)
 		if oneShot then StatusLabel.Text="Loaded" StatusLabel.TextColor3=Color3.fromRGB(100,200,100) TS.Color=Color3.fromRGB(100,200,100)
+		elseif key=="TelAviv" then
+			StatusLabel.Text="✈ TP'd!" StatusLabel.TextColor3=Color3.fromRGB(100,200,100) TS.Color=Color3.fromRGB(100,200,100)
+			task.delay(2,function() StatusLabel.Text="Click to Go" StatusLabel.TextColor3=Color3.fromRGB(150,150,150) TS.Color=Color3.fromRGB(70,70,70) end)
 		elseif runOnce then
 			StatusLabel.Text="✓ Ran!" StatusLabel.TextColor3=Color3.fromRGB(100,200,100) TS.Color=Color3.fromRGB(100,200,100)
 			task.delay(1.5,function() StatusLabel.Text="Click to Run" StatusLabel.TextColor3=Color3.fromRGB(150,150,150) TS.Color=Color3.fromRGB(70,70,70) end)
@@ -1706,10 +1723,12 @@ local function createScriptButton(data, grid)
 			TS.Color=on and Color3.fromRGB(100,149,237) or Color3.fromRGB(70,70,70)
 		end
 	end
-	if not runOnce then tileRefs[key]=setVisual end
+	if not runOnce and key~="TelAviv" then tileRefs[key]=setVisual end
 
 	local function doAction()
-		if runOnce then
+		if key=="TelAviv" then
+			doTelAvivTP() setVisual(true)
+		elseif runOnce then
 			if data.runScript then data.runScript() end setVisual(true)
 		elseif oneShot then
 			if not loaded then loaded=true setVisual(true) toggleFunctions[key](true) end
@@ -1745,13 +1764,100 @@ local generalScripts = {
 	{key="InfiniteJump",  label="Infinite Jump"},
 	{key="AutoAbility",   label="Auto Ability"},
 	{key="SlapFarm",      label="Slap Farm"},
-	{key="TelAviv", label="Tel Aviv"},
+	{key="TelAviv",       label="Tel Aviv"},
 }
 for _,data in ipairs(generalScripts) do createScriptButton(data, GeneralGrid) end
 
--- Obtainment scripts (Teleport Hub first, then Easter Eggs)
+-- =====================
+-- Obtainment scripts
+-- =====================
 createScriptButton({key="TeleportHub", label="Teleport Hub"}, ObtainmentGrid)
 
+-- Admin Glove (Retro map obtainment - public glove)
+local function runAdminGlove()
+	task.spawn(function()
+		local ok, err = pcall(function()
+			local RetroMap = game.ReplicatedStorage.Assets:FindFirstChild("Retro")
+			if not RetroMap then RetroMap = workspace.Retro end
+			RetroMap.Parent = workspace
+			safeTeleportCFrame(CFrame.new(Vector3.new(-16976, 798, 4908)))
+			task.wait(1)
+			for _, AdminButton in pairs(RetroMap.Map.RetroObbyMap:GetDescendants()) do
+				if AdminButton.Name == "StaffApp" then
+					local Button = AdminButton:FindFirstChild("Button")
+					if Button then
+						local CD = Button:FindFirstChildOfClass("ClickDetector")
+						if CD then fireclickdetector(CD) end
+					end
+				end
+			end
+		end)
+		if not ok then showToast("Admin Glove: " .. tostring(err):sub(1,40), Color3.fromRGB(200,80,80)) end
+	end)
+end
+createScriptButton({key="AdminGlove", label="Admin Glove", runOnce=true, runScript=runAdminGlove}, ObtainmentGrid)
+
+-- Icy Trials finish (only works in place 17290438723, times out after 5s)
+local function runIcyTrials()
+	if game.PlaceId ~= 17290438723 then
+		-- Show red indicator in center of screen
+		local errGui = Instance.new("ScreenGui") errGui.ResetOnSpawn=false errGui.Parent=CoreGui
+		local errFrame = Instance.new("Frame")
+		errFrame.Size=UDim2.new(0,300,0,50) errFrame.Position=UDim2.new(0.5,0,0.5,0)
+		errFrame.AnchorPoint=Vector2.new(0.5,0.5) errFrame.BackgroundColor3=Color3.fromRGB(160,30,30)
+		errFrame.BackgroundTransparency=0.1 errFrame.ZIndex=100 errFrame.Parent=errGui
+		local efc=Instance.new("UICorner") efc.CornerRadius=UDim.new(0.2,0) efc.Parent=errFrame
+		local efs=Instance.new("UIStroke") efs.Color=Color3.fromRGB(255,80,80) efs.Thickness=2 efs.Parent=errFrame
+		local efl=Instance.new("TextLabel") efl.Size=UDim2.new(1,0,1,0) efl.BackgroundTransparency=1
+		efl.Text="Must Be In Icy Trials" efl.TextColor3=Color3.fromRGB(255,180,180)
+		efl.TextScaled=true efl.Font=Enum.Font.GothamBold efl.ZIndex=101 efl.Parent=errFrame
+		task.delay(3, function() errGui:Destroy() end)
+		return
+	end
+	task.spawn(function()
+		local ok, err = pcall(function()
+			workspace.FinishDoor_Ice.Model.Part.ProximityPrompt.HoldDuration = 0
+			local deadline = tick() + 5
+			while tick() < deadline do
+				task.wait(0.1)
+				if not Player.Character or not Player.Character:FindFirstChild("HumanoidRootPart") then break end
+				Player.Character.HumanoidRootPart.CFrame = CFrame.new(Vector3.new(-557.204833984375, 177.94590759277344, 54.048336029052734))
+				fireproximityprompt(workspace.FinishDoor_Ice.Model.Part.ProximityPrompt)
+			end
+		end)
+		if not ok then showToast("Icy Trials: " .. tostring(err):sub(1,40), Color3.fromRGB(200,80,80)) end
+	end)
+end
+createScriptButton({key="IcyTrials", label="Icy Trials", runOnce=true, runScript=runIcyTrials}, ObtainmentGrid)
+
+-- Pocket Dimension Doors
+local function runPocketDimension()
+	task.spawn(function()
+		local ok, err = pcall(function()
+			local char = Player.Character
+			if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+			local Redacted = workspace.PocketDimension.Doors
+			for _, door in pairs(Redacted:GetChildren()) do
+				firetouchinterest(char.HumanoidRootPart, door, 0)
+				firetouchinterest(char.HumanoidRootPart, door, 1)
+				task.wait(0.75)
+				char = Player.Character
+				if char and char:FindFirstChild("Humanoid") then
+					if char.Humanoid.Health <= 0 then
+						task.wait(5.5)
+						char = Player.Character
+					else
+						break
+					end
+				end
+			end
+		end)
+		if not ok then showToast("PocketDim: " .. tostring(err):sub(1,40), Color3.fromRGB(200,80,80)) end
+	end)
+end
+createScriptButton({key="PocketDimension", label="Pocket Dim", runOnce=true, runScript=runPocketDimension}, ObtainmentGrid)
+
+-- Easter Eggs
 local function runEasterEggs()
 	local Eggs=workspace:FindFirstChild("EasterHuntEggs")
 	if Eggs then
@@ -1779,12 +1885,18 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if bindingScript then return end
 	if binds["EasterEggs"] and input.KeyCode==binds["EasterEggs"] then runEasterEggs() return end
+	if binds["PocketDimension"] and input.KeyCode==binds["PocketDimension"] then runPocketDimension() return end
+	if binds["AdminGlove"] and input.KeyCode==binds["AdminGlove"] then runAdminGlove() return end
+	if binds["IcyTrials"] and input.KeyCode==binds["IcyTrials"] then runIcyTrials() return end
+	if binds["TelAviv"] and input.KeyCode==binds["TelAviv"] then doTelAvivTP() return end
 	for key,keyCode in pairs(binds) do
 		if input.KeyCode==keyCode then
 			if key=="MouseTP" then doMouseTP()
 			elseif key=="EasterEggs" then runEasterEggs()
-			elseif key=="TelAviv" then
-    			doTelAvivTP()
+			elseif key=="PocketDimension" then runPocketDimension()
+			elseif key=="AdminGlove" then runAdminGlove()
+			elseif key=="IcyTrials" then runIcyTrials()
+			elseif key=="TelAviv" then doTelAvivTP()
 			else
 				local newState=not states[key] states[key]=newState
 				if tileRefs[key] then tileRefs[key](newState) end

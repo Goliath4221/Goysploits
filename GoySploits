@@ -1153,12 +1153,13 @@ local function addESPForPlayer(p)
 	local hrp=p.Character:FindFirstChild("HumanoidRootPart") if not hrp then return end
 	if espBoxes[p.Name] then espBoxes[p.Name]:Destroy() end
 	local box=Instance.new("SelectionBox")
-	box.Adornee=Player.Character
+	box.Adornee=Player.hrp
 	box.Color3=Color3.fromRGB(0,200,255)
 	box.LineThickness=0.06
 	box.SurfaceTransparency=1
 	box.SurfaceColor3=Color3.fromRGB(0,200,255)
 	box.Parent=workspace
+	box.Size = Vector3.new(4, 6, 2)
 	espBoxes[p.Name]=box
 end
 

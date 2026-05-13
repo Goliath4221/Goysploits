@@ -5,48 +5,25 @@ local RunService=game:GetService("RunService")
 local TeleportService=game:GetService("TeleportService")
 local TweenService=game:GetService("TweenService")
 
-------------------------------------------------------------------------
--- THEME
-------------------------------------------------------------------------
 local T={
-	BG   =Color3.fromRGB(8,8,10),
-	MID  =Color3.fromRGB(14,14,18),
-	TILE =Color3.fromRGB(16,16,20),
-	FLOAT=Color3.fromRGB(12,12,16),
-	WHITE=Color3.fromRGB(240,240,255),
-	DIM  =Color3.fromRGB(160,160,185),
-	STR  =Color3.fromRGB(220,220,255),
-	SDIM =Color3.fromRGB(80,80,110),
-	GRN  =Color3.fromRGB(100,220,130),
-	RED  =Color3.fromRGB(220,80,80),
-	FT   =0.22, -- float transparency
-	PT   =0.04, -- panel transparency
+	BG=Color3.fromRGB(8,8,10),MID=Color3.fromRGB(14,14,18),TILE=Color3.fromRGB(16,16,20),
+	FLOAT=Color3.fromRGB(12,12,16),WHITE=Color3.fromRGB(240,240,255),DIM=Color3.fromRGB(160,160,185),
+	STR=Color3.fromRGB(220,220,255),SDIM=Color3.fromRGB(80,80,110),GRN=Color3.fromRGB(100,220,130),
+	RED=Color3.fromRGB(220,80,80),FT=0.22,PT=0.04,
 }
 local TW_S=TweenInfo.new(0.18,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
 local TW_M=TweenInfo.new(0.28,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
 local TW_SL=TweenInfo.new(0.32,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
-
 local function tw(o,p,i) TweenService:Create(o,i or TW_S,p):Play() end
 
-------------------------------------------------------------------------
--- STATE (packed into tables to save locals)
-------------------------------------------------------------------------
 local states={
-	InfiniteYield=false,Voidwalk=false,AutoTP=false,AntiAFK=false,
-	Reach=false,AutoSlapple=false,MouseTP=false,Mobility=false,
-	InfiniteJump=false,AutoAbility=false,SlapFarm=false,
-	TeleportHub=false,AntiVoid=false,AnimationHub=false,
-	AutoKraken=false,AutoPoltergeist=false,AlchemistHack=false,
-	Invisibility=false,
+	InfiniteYield=false,Voidwalk=false,AutoTP=false,AntiAFK=false,Reach=false,
+	AutoSlapple=false,MouseTP=false,Mobility=false,InfiniteJump=false,AutoAbility=false,
+	SlapFarm=false,TeleportHub=false,AntiVoid=false,AnimationHub=false,
+	AutoKraken=false,AutoPoltergeist=false,AlchemistHack=false,Invisibility=false,
 }
-local binds={}
-local tileRefs={}
-local panelSettings={}
-local bindingScript=nil
+local binds={} local tileRefs={} local panelSettings={} local bindingScript=nil
 
-------------------------------------------------------------------------
--- HELPERS
-------------------------------------------------------------------------
 local function addCorner(p,r) local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,r or 6) c.Parent=p return c end
 local function addStroke(p,col,th) local s=Instance.new("UIStroke") s.Color=col or T.STR s.Thickness=th or 1.2 s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border s.Parent=p return s end
 
@@ -55,9 +32,8 @@ local function safeTeleportCFrame(cf)
 	local hrp=char:FindFirstChild("HumanoidRootPart") if not hrp then return end
 	local rels={} local hrpCF=hrp.CFrame
 	for _,p in pairs(char:GetDescendants()) do if p:IsA("BasePart") and p~=hrp then rels[p]=hrpCF:ToObjectSpace(p.CFrame) end end
-	-- Orient upright to prevent void wobble
 	local pos=cf.Position
-	hrp.CFrame=CFrame.new(pos)*CFrame.Angles(0,cf:ToEulerAnglesYXZ(),0)
+	hrp.CFrame=CFrame.new(pos)*CFrame.Angles(0,select(2,cf:ToEulerAnglesYXZ()),0)
 	local n=hrp.CFrame
 	for p,r in pairs(rels) do if p and p.Parent then p.CFrame=n:ToWorldSpace(r) end end
 end
@@ -83,8 +59,7 @@ local function showToast(msg,col)
 	local f=Instance.new("Frame") f.Size=UDim2.new(0,280,0,44) f.AnchorPoint=Vector2.new(0.5,0) f.BackgroundColor3=T.BG f.BackgroundTransparency=0.12 f.ZIndex=100 f.Parent=g
 	addCorner(f,8) local s=addStroke(f,col,1.5) s.Transparency=0.3
 	local l=Instance.new("TextLabel") l.Size=UDim2.new(1,0,1,0) l.BackgroundTransparency=1 l.Text=msg l.TextColor3=col l.TextScaled=true l.Font=Enum.Font.GothamBold l.ZIndex=101 l.Parent=f
-	f.Position=UDim2.new(0.5,0,-0.06,0)
-	tw(f,{Position=UDim2.new(0.5,0,0.06,0)},TW_M)
+	f.Position=UDim2.new(0.5,0,-0.06,0) tw(f,{Position=UDim2.new(0.5,0,0.06,0)},TW_M)
 	task.delay(1.7,function() tw(f,{Position=UDim2.new(0.5,0,-0.06,0)},TW_M) task.wait(0.3) g:Destroy() end)
 end
 
@@ -94,7 +69,8 @@ local function makeFloat(w,h,px,py)
 	addCorner(f,8) addStroke(f,T.STR,1.2) return f
 end
 
-local function makeSlider(parent,yOff,minV,maxV,curV,wScale,xScale,onChange)
+-- Slider: returns track,knob,fill AND calls onChange with value AND updates a textbox if provided
+local function makeSlider(parent,yOff,minV,maxV,curV,wScale,xScale,onChange,valueBox)
 	local track=Instance.new("Frame") track.Size=UDim2.new(wScale or 0.9,0,0,6) track.Position=UDim2.new(xScale or 0.05,0,0,yOff)
 	track.BackgroundColor3=T.MID track.ZIndex=(parent.ZIndex or 50)+1 track.Parent=parent
 	addCorner(track,3) addStroke(track,T.SDIM,1)
@@ -107,7 +83,10 @@ local function makeSlider(parent,yOff,minV,maxV,curV,wScale,xScale,onChange)
 	RunService.RenderStepped:Connect(function()
 		if drag then
 			local rel=math.clamp((UIS:GetMouseLocation().X-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)
-			knob.Position=UDim2.new(rel,0,0.5,0) fill.Size=UDim2.new(rel,0,1,0) onChange(math.round(minV+(maxV-minV)*rel))
+			local val=math.round(minV+(maxV-minV)*rel)
+			knob.Position=UDim2.new(rel,0,0.5,0) fill.Size=UDim2.new(rel,0,1,0)
+			onChange(val)
+			if valueBox then valueBox.Text=tostring(val) end
 		end
 	end)
 	return track,knob,fill
@@ -149,9 +128,7 @@ local function settingsToggle(key)
 	end
 end
 
-------------------------------------------------------------------------
 -- MAIN GUI
-------------------------------------------------------------------------
 local ScreenGui=Instance.new("ScreenGui") ScreenGui.ResetOnSpawn=false ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling ScreenGui.Parent=CoreGui
 
 local TopButton=Instance.new("TextButton")
@@ -194,34 +171,27 @@ TabG.MouseButton1Click:Connect(function() switchTab("G") end)
 TabO.MouseButton1Click:Connect(function() switchTab("O") end)
 TabGl.MouseButton1Click:Connect(function() switchTab("Gl") end)
 
--- SLIDE PANEL IN/OUT
 local panelOpen=false
-local PANEL_OPEN_POS=UDim2.new(0.5,0,0.5,0)
-local PANEL_CLOSE_POS=UDim2.new(-0.65,0,0.5,0)
-
+local OPEN_POS=UDim2.new(0.5,0,0.5,0)
+local CLOSE_POS=UDim2.new(-0.65,0,0.5,0)
 local function openPanel()
 	if panelOpen then return end panelOpen=true
-	Panel.Position=PANEL_CLOSE_POS Panel.Visible=true
-	tw(Panel,{Position=PANEL_OPEN_POS},TW_SL)
+	Panel.Position=CLOSE_POS Panel.Visible=true tw(Panel,{Position=OPEN_POS},TW_SL)
 end
 local function closePanel()
 	if not panelOpen then return end panelOpen=false
-	tw(Panel,{Position=PANEL_CLOSE_POS},TW_SL)
-	task.wait(0.35) if not panelOpen then Panel.Visible=false Panel.Position=PANEL_CLOSE_POS end
+	tw(Panel,{Position=CLOSE_POS},TW_SL)
+	task.wait(0.35) if not panelOpen then Panel.Visible=false Panel.Position=CLOSE_POS end
 end
 TopButton.MouseButton1Click:Connect(function() if panelOpen then closePanel() else openPanel() end end)
 
-------------------------------------------------------------------------
 -- VOIDWALK
-------------------------------------------------------------------------
 local void={part=nil,active=false,conn=nil,gui=nil,y=-10,trans=0,color=Color3.fromRGB(255,255,255),mat=Enum.Material.ForceField}
 local VMATS={"ForceField","SmoothPlastic","Neon","Glass","Metal","Wood","Grass","Ice","Slate"}
-
 local function stopVoidwalk()
 	void.active=false if void.conn then void.conn:Disconnect() void.conn=nil end
 	if void.part then void.part:Destroy() void.part=nil end if void.gui then void.gui:Destroy() void.gui=nil end
 end
-
 local function startVoidwalk()
 	if not Player.Character or not Player.Character:FindFirstChild("HumanoidRootPart") then return end
 	void.active=true
@@ -297,16 +267,12 @@ local function startVoidwalk()
 	addMinBtn(VF,VT,ci,28)
 end
 
-------------------------------------------------------------------------
 -- ANTI-AFK
-------------------------------------------------------------------------
 local afkActive=false
 local function startAntiAFK() afkActive=true task.spawn(function() while afkActive do task.wait(60) if afkActive then game:GetService("VirtualUser"):CaptureController() game:GetService("VirtualUser"):ClickButton2(Vector2.new()) end end end) end
 local function stopAntiAFK() afkActive=false end
 
-------------------------------------------------------------------------
 -- AUTO-SLAPPLE
-------------------------------------------------------------------------
 local slappleActive=false
 local function startAutoSlapple()
 	slappleActive=true
@@ -321,11 +287,7 @@ local function startAutoSlapple()
 					local glove=slapple:FindFirstChild("Glove") if not glove then continue end
 					local part=glove:IsA("Model") and glove.PrimaryPart or glove
 					local char=Player.Character
-					if part and char and char:FindFirstChild("HumanoidRootPart") then
-						firetouchinterest(char.HumanoidRootPart,part,0)
-						task.wait(0.05)
-						firetouchinterest(char.HumanoidRootPart,part,1)
-					end
+					if part and char and char:FindFirstChild("HumanoidRootPart") then firetouchinterest(char.HumanoidRootPart,part,0) task.wait(0.05) firetouchinterest(char.HumanoidRootPart,part,1) end
 				end
 			end
 		end
@@ -333,9 +295,7 @@ local function startAutoSlapple()
 end
 local function stopAutoSlapple() slappleActive=false end
 
-------------------------------------------------------------------------
 -- AUTO-TP
-------------------------------------------------------------------------
 local atp={active=false,respawnTime=0,gui=nil}
 local function stopAutoTP() atp.active=false if atp.gui then atp.gui:Destroy() atp.gui=nil end end
 local function startAutoTP()
@@ -365,46 +325,34 @@ local function startAutoTP()
 	end)
 end
 
-------------------------------------------------------------------------
 -- REACH
-------------------------------------------------------------------------
 local reach={conns={},hrpConns={},tool=nil,part=nil,rPart=nil,rBox=nil,len=10,wid=10,floor=false}
 local GLOVE_DEF=Vector3.new(2.469702959060669,2.844676971435547,1.1790461540222168)
 local function getXW() return reach.floor and 5.25 or 1 end
 local function hideRP() if reach.rPart then reach.rPart.Anchored=true reach.rPart.CFrame=CFrame.new(0,-9999,0) end end
-
 local function attachReachPart()
 	if not reach.rPart or not reach.part or not reach.part.Parent then return end
 	local ow=reach.rPart:FindFirstChild("ReachWeld") if ow then ow:Destroy() end
 	reach.rPart.Anchored=false reach.rPart.Size=Vector3.new(getXW(),reach.len,reach.wid) reach.rPart.CFrame=reach.part.CFrame
 	local weld=Instance.new("WeldConstraint") weld.Name="ReachWeld" weld.Part0=reach.rPart weld.Part1=reach.part weld.Parent=reach.rPart
 end
-
 local function applyToTool(tool)
 	task.wait() reach.tool=tool reach.part=nil local xw=getXW()
-	for _,p in pairs(tool:GetDescendants()) do
-		if p:IsA("BasePart") then p.Size=Vector3.new(xw,reach.len,reach.wid) p.Transparency=1 p.CanCollide=false if not reach.part then reach.part=p end end
-	end
+	for _,p in pairs(tool:GetDescendants()) do if p:IsA("BasePart") then p.Size=Vector3.new(xw,reach.len,reach.wid) p.Transparency=1 p.CanCollide=false if not reach.part then reach.part=p end end end
 	attachReachPart()
 end
-
 local function refreshReachSize()
-	if not reach.tool or not reach.tool.Parent then return end
-	local xw=getXW()
+	if not reach.tool or not reach.tool.Parent then return end local xw=getXW()
 	for _,p in pairs(reach.tool:GetDescendants()) do if p:IsA("BasePart") then p.Size=Vector3.new(xw,reach.len,reach.wid) end end
 	if reach.rPart then reach.rPart.Size=Vector3.new(xw,reach.len,reach.wid) end
 end
-
 local function stopReach()
 	if reach.tool and reach.tool.Parent then for _,p in pairs(reach.tool:GetChildren()) do if p.Name=="Glove" then p.Size=GLOVE_DEF p.Transparency=0 end end end
-	for _,c in pairs(reach.conns) do c:Disconnect() end reach.conns={}
-	for _,c in pairs(reach.hrpConns) do c:Disconnect() end reach.hrpConns={}
+	for _,c in pairs(reach.conns) do c:Disconnect() end reach.conns={} for _,c in pairs(reach.hrpConns) do c:Disconnect() end reach.hrpConns={}
 	if reach.rPart then local w=reach.rPart:FindFirstChild("ReachWeld") if w then w:Destroy() end reach.rPart:Destroy() reach.rPart=nil end
-	if reach.rBox then reach.rBox:Destroy() reach.rBox=nil end
-	reach.tool=nil reach.part=nil
+	if reach.rBox then reach.rBox:Destroy() reach.rBox=nil end reach.tool=nil reach.part=nil
 	for _,p in pairs(game.Players:GetPlayers()) do if p~=Player and p.Character then local h=p.Character:FindFirstChild("HumanoidRootPart") if h then h.Size=Vector3.new(2,2,1) h.Transparency=1 h.CanCollide=false end end end
 end
-
 local function startReach()
 	reach.rPart=Instance.new("Part") reach.rPart.Name="ReachPart" reach.rPart.Anchored=true reach.rPart.CanCollide=false reach.rPart.Transparency=1 reach.rPart.Massless=true reach.rPart.Size=Vector3.new(getXW(),reach.wid,reach.len) reach.rPart.CFrame=CFrame.new(0,-9999,0) reach.rPart.Parent=workspace
 	reach.rBox=Instance.new("SelectionBox") reach.rBox.Adornee=reach.rPart reach.rBox.Color3=T.WHITE reach.rBox.LineThickness=0.05 reach.rBox.SurfaceTransparency=0.6 reach.rBox.SurfaceColor3=T.WHITE reach.rBox.Parent=workspace
@@ -415,16 +363,12 @@ local function startReach()
 		table.insert(reach.conns,Player.Character.ChildAdded:Connect(onAdd)) table.insert(reach.conns,Player.Character.ChildRemoved:Connect(onRemove))
 		for _,c in pairs(Player.Character:GetChildren()) do if c:IsA("Tool") then applyToTool(c) end end
 	end
-	-- Periodic weld health check every 2 seconds
 	table.insert(reach.conns,RunService.Heartbeat:Connect(function()
 		if not reach.tool or not reach.tool.Parent or not reach.rPart then return end
 		local weld=reach.rPart:FindFirstChild("ReachWeld")
-		if not weld or not weld.Part1 or not weld.Part1.Parent then
-			attachReachPart()
-		end
+		if not weld or not weld.Part1 or not weld.Part1.Parent then attachReachPart() end
 	end))
 end
-
 local function buildReachSettings()
 	local sg=Instance.new("ScreenGui") sg.ResetOnSpawn=false sg.Parent=CoreGui panelSettings["Reach"]=sg
 	local SP=Instance.new("Frame") SP.Size=UDim2.new(0.25,0,0,210) SP.Position=UDim2.new(0.5,0,0.5,0) SP.AnchorPoint=Vector2.new(0.5,0.5) SP.BackgroundColor3=T.BG SP.BackgroundTransparency=0.05 SP.Visible=false SP.ZIndex=50 SP.Parent=sg addCorner(SP,8) addStroke(SP,T.STR,1.5)
@@ -444,25 +388,19 @@ local function buildReachSettings()
 	addSRow("Length",10,20,reach.len,function(v) reach.len=v refreshReachSize() end)
 	addSRow("Width",10,20,reach.wid,function(v) reach.wid=v refreshReachSize() end)
 	addSwRow("Expand HRP",false,function(v)
-		if v then
-			for _,p in pairs(game.Players:GetPlayers()) do if p~=Player and p.Character then local h=p.Character:WaitForChild("HumanoidRootPart") h.Size=Vector3.new(10,10,10) h.Transparency=0.8 h.CanCollide=false end table.insert(reach.hrpConns,p.CharacterAdded:Connect(function(char) if p~=Player then local h=char:WaitForChild("HumanoidRootPart") h.Size=Vector3.new(10,10,10) h.Transparency=0.8 h.CanCollide=false end end)) end
+		if v then for _,p in pairs(game.Players:GetPlayers()) do if p~=Player and p.Character then local h=p.Character:WaitForChild("HumanoidRootPart") h.Size=Vector3.new(10,10,10) h.Transparency=0.8 h.CanCollide=false end table.insert(reach.hrpConns,p.CharacterAdded:Connect(function(char) if p~=Player then local h=char:WaitForChild("HumanoidRootPart") h.Size=Vector3.new(10,10,10) h.Transparency=0.8 h.CanCollide=false end end)) end
 		else for _,c in pairs(reach.hrpConns) do c:Disconnect() end reach.hrpConns={} for _,p in pairs(game.Players:GetPlayers()) do if p~=Player and p.Character then local h=p.Character:FindFirstChild("HumanoidRootPart") if h then h.Size=Vector3.new(2,2,1) h.Transparency=1 h.CanCollide=false end end end end
 	end)
 	addSwRow("Hit Floor",reach.floor,function(v) reach.floor=v refreshReachSize() end)
 	SP.Size=UDim2.new(0.25,0,0,yOff+10)
 end
 
-------------------------------------------------------------------------
--- MOUSE-TP
-------------------------------------------------------------------------
 local function doMouseTP()
 	if not states.MouseTP then return end local mouse=Player:GetMouse() local target=mouse.Hit
 	if target then local hrp=Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") if hrp then safeTeleportCFrame(CFrame.new(target.Position+Vector3.new(0,3,0))) end end
 end
 
-------------------------------------------------------------------------
--- MOBILITY
-------------------------------------------------------------------------
+-- MOBILITY — fixed: textbox updates during slider drag
 local mob={gui=nil,conn=nil,speed=20,jump=50,grav=196}
 local function stopMobility()
 	if mob.conn then mob.conn:Disconnect() mob.conn=nil end if mob.gui then mob.gui:Destroy() mob.gui=nil end
@@ -476,9 +414,11 @@ local function startMobility()
 	local sc={} local yOff=28
 	local function mkSS(labelText,minV,maxV,defV,onChange)
 		local lb=Instance.new("TextLabel") lb.Size=UDim2.new(0.96,0,0,13) lb.Position=UDim2.new(0.02,0,0,yOff) lb.BackgroundTransparency=1 lb.Text=labelText lb.TextColor3=T.DIM lb.TextScaled=true lb.Font=Enum.Font.GothamBold lb.Parent=SF table.insert(sc,lb)
-		local tr,_,_=makeSlider(SF,yOff+15,minV,maxV,defV,0.62,0.03,onChange) tr.ZIndex=2 table.insert(sc,tr)
+		-- Create textbox BEFORE slider so we can pass it to makeSlider
 		local vb=Instance.new("TextBox") vb.Size=UDim2.new(0.3,0,0,13) vb.Position=UDim2.new(0.67,0,0,yOff+13) vb.BackgroundColor3=T.MID vb.BackgroundTransparency=0.1 vb.Text=tostring(defV) vb.TextColor3=T.WHITE vb.TextScaled=true vb.Font=Enum.Font.Gotham vb.Parent=SF addCorner(vb,4) addStroke(vb,T.SDIM,1) table.insert(sc,vb)
-		vb.FocusLost:Connect(function() local n=tonumber(vb.Text) if n then n=math.clamp(n,minV,maxV) onChange(n) else vb.Text=tostring(defV) end end)
+		-- Pass vb to makeSlider so it updates during drag
+		local tr,_,_=makeSlider(SF,yOff+15,minV,maxV,defV,0.62,0.03,onChange,vb) tr.ZIndex=2 table.insert(sc,tr)
+		vb.FocusLost:Connect(function() local n=tonumber(vb.Text) if n then n=math.clamp(n,minV,maxV) onChange(n) vb.Text=tostring(n) else vb.Text=tostring(defV) end end)
 		yOff=yOff+36
 	end
 	mkSS("Speed",0,500,mob.speed,function(v)mob.speed=v end)
@@ -491,9 +431,7 @@ local function startMobility()
 	addMinBtn(SF,SFT,sc,28)
 end
 
-------------------------------------------------------------------------
 -- INFINITE JUMP
-------------------------------------------------------------------------
 local ij={gui=nil,conns={}}
 local function stopInfiniteJump()
 	for _,c in pairs(ij.conns) do c:Disconnect() end ij.conns={} local p=workspace:FindFirstChild("InfiniteJumpPart") if p then p:Destroy() end if ij.gui then ij.gui:Destroy() ij.gui=nil end
@@ -508,29 +446,52 @@ local function startInfiniteJump()
 	JB.MouseButton1Click:Connect(function() if states.InfiniteJump then doJump() end end)
 end
 
-------------------------------------------------------------------------
--- AUTO ABILITY
-------------------------------------------------------------------------
+-- AUTO ABILITY — fixed UI layout: everything pixel-positioned inside a larger frame
 local aa={gui=nil,active=false}
 local function stopAutoAbility() if aa.gui then aa.gui:Destroy() end aa.active=false aa.gui=nil end
 local function startAutoAbility()
 	local cdE=0 local cdR=0 local eOn=false local rOn=false local eGui=true local rGui=false
 	aa.active=true if aa.gui then aa.gui:Destroy() end aa.gui=Instance.new("ScreenGui") aa.gui.ResetOnSpawn=false aa.gui.Parent=CoreGui
-	local AF=makeFloat(0,0,0,0) AF.Size=UDim2.new(0,82,0,122) AF.Position=UDim2.new(0.05,0,0.15,0) AF.AnchorPoint=Vector2.new(0.5,0.5) AF.ClipsDescendants=true AF.Parent=aa.gui
-	local AT=Instance.new("TextLabel") AT.Size=UDim2.new(0.72,0,0,22) AT.Position=UDim2.new(0.02,0,0,3) AT.BackgroundTransparency=1 AT.Text="Auto Ability" AT.TextColor3=T.WHITE AT.TextScaled=true AT.Font=Enum.Font.GothamBold AT.Parent=AF makeDraggable(AF,AT)
-	local afc={}
-	local function mkAbBtn(txt,xp) local b=Instance.new("TextButton") b.Size=UDim2.new(0.38,0,0,24) b.Position=UDim2.new(xp,0,0,30) b.BackgroundColor3=T.MID b.TextColor3=T.WHITE b.Text=txt b.TextScaled=true b.Font=Enum.Font.GothamBold b.Parent=AF addCorner(b,5) local s=addStroke(b,T.SDIM,1) table.insert(afc,b) return b,s end
-	local EB,EBO=mkAbBtn("E",0.07) EBO.Color=T.STR EBO.Thickness=1.5
-	local RB,RBO=mkAbBtn("R",0.55)
-	local ECG=Instance.new("TextBox") ECG.Size=UDim2.new(0.88,0,0,18) ECG.Position=UDim2.new(0.06,0,0,60) ECG.Text="0 sec" ECG.BackgroundColor3=T.MID ECG.BackgroundTransparency=0.1 ECG.TextColor3=T.WHITE ECG.TextScaled=true ECG.Font=Enum.Font.GothamBold ECG.Parent=AF addCorner(ECG,4) addStroke(ECG,T.SDIM,1) table.insert(afc,ECG)
-	local ESW,_,_=makeSwitch(AF,82,-8,false,function(v) eOn=v end) table.insert(afc,ESW)
-	local RCG=Instance.new("TextBox") RCG.Visible=false RCG.Size=UDim2.new(0.88,0,0,18) RCG.Position=UDim2.new(0.06,0,0,60) RCG.Text="0 sec" RCG.BackgroundColor3=T.MID RCG.BackgroundTransparency=0.1 RCG.TextColor3=T.WHITE RCG.TextScaled=true RCG.Font=Enum.Font.GothamBold RCG.Parent=AF addCorner(RCG,4) addStroke(RCG,T.SDIM,1) table.insert(afc,RCG)
-	local RSW,_,_=makeSwitch(AF,82,-8,false,function(v) rOn=v end) RSW.Visible=false table.insert(afc,RSW)
-	local cdL=Instance.new("TextLabel") cdL.Size=UDim2.new(0.88,0,0,11) cdL.Position=UDim2.new(0.06,0,0,57) cdL.BackgroundTransparency=1 cdL.Text="Cooldown (sec):" cdL.TextColor3=T.DIM cdL.TextScaled=true cdL.Font=Enum.Font.Gotham cdL.Parent=AF table.insert(afc,cdL)
-	local enL=Instance.new("TextLabel") enL.Size=UDim2.new(0.88,0,0,11) enL.Position=UDim2.new(0.06,0,0,78) enL.BackgroundTransparency=1 enL.Text="Enable:" enL.TextColor3=T.DIM enL.TextScaled=true enL.Font=Enum.Font.Gotham enL.Parent=AF table.insert(afc,enL)
+	-- Frame is tall enough to contain everything, ClipsDescendants off so nothing clips
+	local AF=makeFloat(0,0,0,0)
+	AF.Size=UDim2.new(0,110,0,145) AF.Position=UDim2.new(0.05,0,0.15,0) AF.AnchorPoint=Vector2.new(0.5,0.5)
+	AF.ClipsDescendants=false AF.Parent=aa.gui
+	local AT=Instance.new("TextLabel") AT.Size=UDim2.new(1,-8,0,20) AT.Position=UDim2.new(0,4,0,4) AT.BackgroundTransparency=1 AT.Text="Auto Ability" AT.TextColor3=T.WHITE AT.TextScaled=true AT.Font=Enum.Font.GothamBold AT.Parent=AF
+	makeDraggable(AF,AT)
+	-- E and R tab buttons
+	local function mkAbBtn(txt,xOff)
+		local b=Instance.new("TextButton") b.Size=UDim2.new(0,40,0,28) b.Position=UDim2.new(0,xOff,0,28)
+		b.BackgroundColor3=T.MID b.TextColor3=T.WHITE b.Text=txt b.TextScaled=true b.Font=Enum.Font.GothamBold b.Parent=AF
+		addCorner(b,5) local s=addStroke(b,T.SDIM,1) return b,s
+	end
+	local EB,EBO=mkAbBtn("E",6) EBO.Color=T.STR EBO.Thickness=1.5
+	local RB,RBO=mkAbBtn("R",58)
+	-- Cooldown label + input
+	local cdLbl=Instance.new("TextLabel") cdLbl.Size=UDim2.new(1,-8,0,13) cdLbl.Position=UDim2.new(0,4,0,62) cdLbl.BackgroundTransparency=1 cdLbl.Text="Cooldown (sec):" cdLbl.TextColor3=T.DIM cdLbl.TextScaled=true cdLbl.Font=Enum.Font.Gotham cdLbl.TextXAlignment=Enum.TextXAlignment.Left cdLbl.Parent=AF
+	local ECG=Instance.new("TextBox") ECG.Size=UDim2.new(1,-8,0,22) ECG.Position=UDim2.new(0,4,0,78) ECG.Text="0 sec" ECG.BackgroundColor3=T.MID ECG.BackgroundTransparency=0.1 ECG.TextColor3=T.WHITE ECG.TextScaled=true ECG.Font=Enum.Font.GothamBold ECG.Parent=AF addCorner(ECG,4) addStroke(ECG,T.SDIM,1)
+	local RCG=Instance.new("TextBox") RCG.Size=UDim2.new(1,-8,0,22) RCG.Position=UDim2.new(0,4,0,78) RCG.Text="0 sec" RCG.BackgroundColor3=T.MID RCG.BackgroundTransparency=0.1 RCG.TextColor3=T.WHITE RCG.TextScaled=true RCG.Font=Enum.Font.GothamBold RCG.Visible=false RCG.Parent=AF addCorner(RCG,4) addStroke(RCG,T.SDIM,1)
+	-- Enable label + switch (all inside frame, pixel positioned)
+	local enLbl=Instance.new("TextLabel") enLbl.Size=UDim2.new(0,55,0,13) enLbl.Position=UDim2.new(0,4,0,108) enLbl.BackgroundTransparency=1 enLbl.Text="Enable:" enLbl.TextColor3=T.DIM enLbl.TextScaled=true enLbl.Font=Enum.Font.Gotham enLbl.TextXAlignment=Enum.TextXAlignment.Left enLbl.Parent=AF
+	-- Switch positioned to the right of enable label, inside frame
+	local ESW=Instance.new("TextButton") ESW.Size=UDim2.new(0,36,0,18) ESW.Position=UDim2.new(1,-42,0,104) ESW.BackgroundColor3=T.MID ESW.Text="" ESW.ZIndex=(AF.ZIndex or 1)+1 ESW.Parent=AF addCorner(ESW,9) addStroke(ESW,T.SDIM,1)
+	local EK=Instance.new("Frame") EK.Size=UDim2.new(0,14,0,14) EK.Position=UDim2.new(0,2,0,2) EK.BackgroundColor3=T.DIM EK.ZIndex=ESW.ZIndex+1 EK.Parent=ESW addCorner(EK,7)
+	local RSW=Instance.new("TextButton") RSW.Size=UDim2.new(0,36,0,18) RSW.Position=UDim2.new(1,-42,0,104) RSW.BackgroundColor3=T.MID RSW.Text="" RSW.Visible=false RSW.ZIndex=(AF.ZIndex or 1)+1 RSW.Parent=AF addCorner(RSW,9) addStroke(RSW,T.SDIM,1)
+	local RK=Instance.new("Frame") RK.Size=UDim2.new(0,14,0,14) RK.Position=UDim2.new(0,2,0,2) RK.BackgroundColor3=T.DIM RK.ZIndex=RSW.ZIndex+1 RK.Parent=RSW addCorner(RK,7)
+	local afc={ECG,RCG,enLbl,ESW,RSW,cdLbl}
 	addMinBtn(AF,AT,afc,28)
-	EB.MouseButton1Up:Connect(function() if eGui then return end EBO.Color=T.STR EBO.Thickness=1.5 ECG.Visible=true ESW.Visible=true RBO.Color=T.SDIM RBO.Thickness=1 RCG.Visible=false RSW.Visible=false eGui=true rGui=false end)
-	RB.MouseButton1Up:Connect(function() if rGui then return end EBO.Color=T.SDIM EBO.Thickness=1 ECG.Visible=false ESW.Visible=false RBO.Color=T.STR RBO.Thickness=1.5 RCG.Visible=true RSW.Visible=true rGui=true eGui=false end)
+	local function setSwitchOn(sw,kn,on)
+		tw(sw,{BackgroundColor3=on and T.WHITE or T.MID}) tw(kn,{Position=on and UDim2.new(1,-16,0,2) or UDim2.new(0,2,0,2),BackgroundColor3=on and T.BG or T.DIM})
+	end
+	ESW.MouseButton1Click:Connect(function() eOn=not eOn setSwitchOn(ESW,EK,eOn) end)
+	RSW.MouseButton1Click:Connect(function() rOn=not rOn setSwitchOn(RSW,RK,rOn) end)
+	EB.MouseButton1Up:Connect(function()
+		if eGui then return end EBO.Color=T.STR EBO.Thickness=1.5 ECG.Visible=true ESW.Visible=true
+		RBO.Color=T.SDIM RBO.Thickness=1 RCG.Visible=false RSW.Visible=false eGui=true rGui=false
+	end)
+	RB.MouseButton1Up:Connect(function()
+		if rGui then return end EBO.Color=T.SDIM EBO.Thickness=1 ECG.Visible=false ESW.Visible=false
+		RBO.Color=T.STR RBO.Thickness=1.5 RCG.Visible=true RSW.Visible=true rGui=true eGui=false
+	end)
 	ECG.FocusLost:Connect(function() local n=tonumber(ECG.Text) if n then cdE=n ECG.Text=cdE.." sec" else ECG.Text=cdE.." sec" end end)
 	RCG.FocusLost:Connect(function() local n=tonumber(RCG.Text) if n then cdR=n RCG.Text=cdR.." sec" else RCG.Text=cdR.." sec" end end)
 	local VIM=game:GetService("VirtualInputManager")
@@ -538,9 +499,7 @@ local function startAutoAbility()
 	task.spawn(function() while aa.active and task.wait(cdR) do if rOn then VIM:SendKeyEvent(true,Enum.KeyCode.R,false,game) task.wait(0.1) VIM:SendKeyEvent(false,Enum.KeyCode.R,false,game) else task.wait(0.1) end end end)
 end
 
-------------------------------------------------------------------------
 -- ANTI-VOID
-------------------------------------------------------------------------
 local av={conn=nil,legit=false,inProgress=false}
 local function buildAntiVoidSettings()
 	local sg=Instance.new("ScreenGui") sg.ResetOnSpawn=false sg.Parent=CoreGui panelSettings["AntiVoid"]=sg
@@ -560,26 +519,17 @@ local function startAntiVoid()
 				av.inProgress=true
 				local cam=workspace.CurrentCamera local savedCF=cam.CFrame local savedCT=cam.CameraType
 				cam.CameraType=Enum.CameraType.Scriptable cam.CFrame=savedCF
-				-- Teleport upright to far away spot
-				local farCF=CFrame.new(Vector3.new(500000,200,500000))
-				hrp.CFrame=farCF
+				hrp.CFrame=CFrame.new(Vector3.new(500000,200,500000))
 				local hC=RunService.RenderStepped:Connect(function() cam.CFrame=savedCF end)
 				task.wait(4) hC:Disconnect()
-				-- Teleport back upright
-				local backCF=CFrame.new(0,10,0)
-				hrp.CFrame=backCF
-				cam.CameraType=savedCT av.inProgress=false
-			else
-				hrp.CFrame=CFrame.new(0,10,0)
-			end
+				hrp.CFrame=CFrame.new(0,10,0) cam.CameraType=savedCT av.inProgress=false
+			else hrp.CFrame=CFrame.new(0,10,0) end
 		end
 	end)
 end
 local function stopAntiVoid() if av.conn then av.conn:Disconnect() av.conn=nil end av.inProgress=false end
 
-------------------------------------------------------------------------
--- INVISIBILITY — faithful to original
-------------------------------------------------------------------------
+-- INVISIBILITY
 local invis={active=false,conns={}}
 local function stopInvisibility()
 	invis.active=false for _,c in ipairs(invis.conns) do pcall(function() c:Disconnect() end) end invis.conns={}
@@ -601,8 +551,7 @@ local function startInvisibility()
 			if isRef then return end isRef=true
 			local character=plr.Character if not character then isRef=false return end
 			local rootPart=character:FindFirstChild("HumanoidRootPart")
-			local savedCF=rootPart and rootPart.CFrame or CFrame.new(0,5,0)
-			local savedCamCF=workspace.CurrentCamera.CFrame
+			local savedCF=rootPart and rootPart.CFrame or CFrame.new(0,5,0) local savedCamCF=workspace.CurrentCamera.CFrame
 			task.spawn(function()
 				local hum=character:FindFirstChildWhichIsA("Humanoid") if hum then hum:ChangeState(Enum.HumanoidStateType.Dead) end
 				character:ClearAllChildren()
@@ -617,13 +566,11 @@ local function startInvisibility()
 		return RefreshCharacter
 	end
 	local function TurnInvisible()
-		if not invis.active then return end
-		QuickRespawn()
+		if not invis.active then return end QuickRespawn()
 		currentglove=plr:WaitForChild("leaderstats").Glove.Value
 		local gm=workspace.Lobby:FindFirstChild(currentglove)
 		if gm then local cd=gm:FindFirstChildOfClass("ClickDetector") if not cd then for _,d in pairs(gm:GetDescendants()) do if d:IsA("ClickDetector") then cd=d break end end end if cd then glovecd=cd end end
-		if not invis.active then return end
-		fireclickdetector(ghostcd) event:FireServer() if glovecd then fireclickdetector(glovecd) end
+		if not invis.active then return end fireclickdetector(ghostcd) event:FireServer() if glovecd then fireclickdetector(glovecd) end
 	end
 	local function AutoUnEquip() if not invis.active then return end if firsttime then local t=plr.Character and plr.Character:FindFirstChildOfClass("Tool") if t then t.Parent=plr.Backpack end firsttime=false end end
 	local charConn=plr.CharacterAdded:Connect(function(newChar)
@@ -631,21 +578,17 @@ local function startInvisibility()
 		local c2=newChar.ChildAdded:Connect(function(child) if not invis.active then return end if child:IsA("Tool") then task.wait(0.01) AutoUnEquip() end end) table.insert(invis.conns,c2)
 	end)
 	table.insert(invis.conns,charConn)
-	local char=plr.Character
-	if char then local c3=char.ChildAdded:Connect(function(child) if not invis.active then return end if child:IsA("Tool") then task.wait(0.01) AutoUnEquip() end end) table.insert(invis.conns,c3) end
+	local char=plr.Character if char then local c3=char.ChildAdded:Connect(function(child) if not invis.active then return end if child:IsA("Tool") then task.wait(0.01) AutoUnEquip() end end) table.insert(invis.conns,c3) end
 	TurnInvisible()
 end
 
-------------------------------------------------------------------------
 -- ANIMATION HUB
-------------------------------------------------------------------------
 local animH={gui=nil,active=false,tracks={},emote=nil,lastEmoteId="",conns={}}
 local WALK_ANIMS={{"Default Walk","rbxassetid://180426354"},{"Ninja Walk","rbxassetid://616010382"},{"Zombie Walk","rbxassetid://616163682"},{"Tiptoe Walk","rbxassetid://616008936"},{"Robot Walk","rbxassetid://616091570"},{"Stylish Strut","rbxassetid://616077034"},{"Pirate Swagger","rbxassetid://750767215"},{"Custom","custom"}}
 local JUMP_ANIMS={{"Default Jump","rbxassetid://125750702"},{"Flip Jump","rbxassetid://738038258"},{"Rocket Jump","rbxassetid://616014967"},{"Custom","custom"}}
 local FALL_ANIMS={{"Default Fall","rbxassetid://180436148"},{"Dramatic Fall","rbxassetid://616013762"},{"Graceful Fall","rbxassetid://616006778"},{"Custom","custom"}}
 local CLIMB_ANIMS={{"Default Climb","rbxassetid://180436334"},{"Fast Climb","rbxassetid://616023781"},{"Monkey Climb","rbxassetid://616008960"},{"Custom","custom"}}
 local selAnims={walk=nil,jump=nil,fall=nil,climb=nil}
-
 local function getAnimator() local char=Player.Character if not char then return nil end local hum=char:FindFirstChild("Humanoid") if not hum then return nil end return hum:FindFirstChildOfClass("Animator") end
 local function stopAllAnims() for k,tr in pairs(animH.tracks) do if tr and tr.IsPlaying then tr:Stop() end animH.tracks[k]=nil end end
 local function applyAnimOverrides()
@@ -706,9 +649,7 @@ local function startAnimationHub()
 	applyAnimOverrides()
 end
 
-------------------------------------------------------------------------
 -- TEL AVIV
-------------------------------------------------------------------------
 local telAvivBuilt=false local telAvivParts={} local TEL_POS=Vector3.new(10000,100,10000)
 local function buildTelAviv()
 	if telAvivBuilt then return end telAvivBuilt=true
@@ -724,10 +665,8 @@ local function buildTelAviv()
 	mkP(Vector3.new(1,0.5,160),Vector3.new(-4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
 	mkP(Vector3.new(1,0.5,160),Vector3.new(4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
 	for _,z in ipairs({-60,-30,0,30,60}) do for _,s in ipairs({-12,12}) do mkP(Vector3.new(8,1,2.5),Vector3.new(s,2.5,z),Color3.fromRGB(120,85,50),Enum.Material.Wood) mkP(Vector3.new(8,2,0.5),Vector3.new(s,4,z+(s>0 and 1 or -1)),Color3.fromRGB(120,85,50),Enum.Material.Wood) for _,lx in ipairs({s-3,s+3}) do mkP(Vector3.new(0.8,1.5,0.8),Vector3.new(lx,1.75,z),Color3.fromRGB(90,90,90),Enum.Material.Metal) end end end
-	mkP(Vector3.new(22,1.5,22),Vector3.new(0,2.25,0),Color3.fromRGB(220,215,200),Enum.Material.Marble)
-	mkP(Vector3.new(18,0.5,18),Vector3.new(0,2,0),Color3.fromRGB(100,180,220),Enum.Material.Glass)
-	mkP(Vector3.new(8,3,8),Vector3.new(0,3.5,0),Color3.fromRGB(230,225,210),Enum.Material.Marble)
-	mkP(Vector3.new(2,10,2),Vector3.new(0,10,0),Color3.fromRGB(215,210,195),Enum.Material.Marble)
+	mkP(Vector3.new(22,1.5,22),Vector3.new(0,2.25,0),Color3.fromRGB(220,215,200),Enum.Material.Marble) mkP(Vector3.new(18,0.5,18),Vector3.new(0,2,0),Color3.fromRGB(100,180,220),Enum.Material.Glass)
+	mkP(Vector3.new(8,3,8),Vector3.new(0,3.5,0),Color3.fromRGB(230,225,210),Enum.Material.Marble) mkP(Vector3.new(2,10,2),Vector3.new(0,10,0),Color3.fromRGB(215,210,195),Enum.Material.Marble)
 	mkS(Vector3.new(4,4,4),Vector3.new(0,16,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
 	for _,b in ipairs({{Vector3.new(-65,0,-40),18,14,36},{Vector3.new(-65,0,0),22,14,52},{Vector3.new(-65,0,40),18,14,42},{Vector3.new(65,0,-40),18,14,44},{Vector3.new(65,0,0),20,14,60},{Vector3.new(65,0,40),18,14,38}}) do local pos,w,d,h=b[1],b[2],b[3],b[4] mkP(Vector3.new(w,h,d),pos+Vector3.new(0,h/2,0),Color3.fromRGB(248,248,248),Enum.Material.SmoothPlastic) mkP(Vector3.new(w+2,2,d+2),pos+Vector3.new(0,h+1,0),Color3.fromRGB(0,56,184),Enum.Material.SmoothPlastic) for fl=1,math.floor(h/6)-1 do mkP(Vector3.new(w-2,1.2,0.3),pos+Vector3.new(0,fl*6,-d/2-0.2),Color3.fromRGB(180,210,255),Enum.Material.Glass) mkP(Vector3.new(w-2,1.2,0.3),pos+Vector3.new(0,fl*6,d/2+0.2),Color3.fromRGB(180,210,255),Enum.Material.Glass) end end
 	for _,side in ipairs({-1,1}) do for _,z in ipairs({-70,-35,35,70}) do local bx=side*55 local tr=Instance.new("Part") tr.Size=Vector3.new(3,20,3) tr.Shape=Enum.PartType.Cylinder tr.CFrame=CFrame.new(TEL_POS+Vector3.new(bx,11,z))*CFrame.Angles(0,0,math.rad(90)) tr.Color=Color3.fromRGB(130,90,45) tr.Material=Enum.Material.Wood tr.Anchored=true tr.Parent=workspace table.insert(telAvivParts,tr) mkS(Vector3.new(14,5,14),Vector3.new(bx,22,z),Color3.fromRGB(45,120,40),Enum.Material.Grass) mkS(Vector3.new(10,4,10),Vector3.new(bx,25,z),Color3.fromRGB(55,140,45),Enum.Material.Grass) mkS(Vector3.new(6,3,6),Vector3.new(bx,28,z),Color3.fromRGB(65,155,50),Enum.Material.Grass) end end
@@ -742,9 +681,7 @@ end
 local function doTelAvivTP() buildTelAviv() safeTeleportCFrame(CFrame.new(TEL_POS+Vector3.new(0,12,0))) showToast("✈ Teleported to Tel Aviv") end
 local function doTelAvivHomeTP() safeTeleportCFrame(CFrame.new(18,3,-14)) showToast("⌂ Returned Home",T.DIM) end
 
-------------------------------------------------------------------------
 -- TELEPORT HUB
-------------------------------------------------------------------------
 local tpHub={gui=nil}
 local TP_PLACES={
 	{name="Elude Maze",id=11828384869},{name="Barzil",id=7234087065},{name="Icy Trials",id=17290438723},{name="Where Guide Resides",id=18550498098},{name="Binded Maze",id=74169485398268},{name="Four Seasons",id=78804514423551},{name="Find the Gloves",id=79885102123162},{name="Penguin Teleport Place",id=86643839793301},{name="Splat Battles (Paint)",id=90553746175288},{name="Pim's Corn Maze",id=92483185275059},{name="Conker Obtainment",id=101113181694564},{name="Zombies (Poltergeist)",id=103505724406848},{name="Plate Glove Obtainment",id=106620300132058},{name="Untitled Tag Glove",id=115782629143468},
@@ -769,9 +706,7 @@ local function startTeleportHub()
 end
 local function stopTeleportHub() if tpHub.gui then tpHub.gui:Destroy() tpHub.gui=nil end end
 
-------------------------------------------------------------------------
 -- AUTO KRAKEN
-------------------------------------------------------------------------
 local kraken={active=false,tween=nil,conn=nil}
 local function startAutoKraken()
 	kraken.active=true
@@ -784,9 +719,7 @@ local function startAutoKraken()
 end
 local function stopAutoKraken() kraken.active=false if kraken.tween then kraken.tween:Cancel() kraken.tween=nil end if kraken.conn then kraken.conn:Disconnect() kraken.conn=nil end end
 
-------------------------------------------------------------------------
 -- AUTO POLTERGEIST
-------------------------------------------------------------------------
 local polt={active=false,safeConn=nil,slotPart=nil}
 local function stopAutoPoltergeist() polt.active=false if polt.safeConn then polt.safeConn:Disconnect() polt.safeConn=nil end if polt.slotPart then polt.slotPart:Destroy() polt.slotPart=nil end end
 local function startAutoPoltergeist()
@@ -812,31 +745,20 @@ local function startAutoPoltergeist()
 	end)
 end
 
-------------------------------------------------------------------------
 -- ALCHEMIST HACK
-------------------------------------------------------------------------
 local alch={active=false,gui=nil,char=Player.Character or Player.CharacterAdded:Wait()}
 alch.hrp=alch.char:WaitForChild("HumanoidRootPart")
 Player.CharacterAdded:Connect(function(nc) alch.char=nc alch.hrp=nc:WaitForChild("HumanoidRootPart") end)
 local POTIONS={
-	{name="Stun Potion",effect="Stuns player",ingredients={"2x Plane Flower"}},
-	{name="Explosion Potion",effect="Explodes on impact",ingredients={"2x Fire Flower","1x Red Crystal"}},
-	{name="Nightmare Potion",effect="Nightmare effect",ingredients={"3x Dark Root"}},
-	{name="Grug Potion",effect="Grug effect",ingredients={"1x Mushroom"}},
-	{name="Speed Potion",effect="Increases walkspeed",ingredients={"1x Jade Stone","1x Autumn Sprout"}},
-	{name="Transparency Potion",effect="Makes invisible",ingredients={"2x Hazel Lily","1x Blue Crystal"}},
-	{name="Confusion Potion",effect="Confuses player",ingredients={"1x Red Crystal","1x Blue Crystal","1x Glowing Mushroom"}},
-	{name="Strength Potion",effect="Increases strength",ingredients={"1x Dire Flower","1x Red Crystal","1x Wild Vine"}},
-	{name="Speed Potion (Alt)",effect="Increases walkspeed",ingredients={"2x Mushroom","1x Plane Flower","1x Hazel Lily","1x Blue Crystal"}},
-	{name="Frozen Potion",effect="Freezes player",ingredients={"2x Winter Rose","1x Wild Vine","1x Blue Crystal","1x Glowing Mushroom"}},
-	{name="Poison Potion",effect="Applies poison",ingredients={"2x Dark Root","1x Blood Rose","1x Red Crystal"}},
-	{name="Invincibility Potion",effect="Grants invincibility",ingredients={"1x Elder Wood","2x Mushroom"}},
-	{name="Instant Death Potion",effect="Instantly kills",ingredients={"10x Dark Root","10x Blood Rose"}},
-	{name="Slowdown Potion",effect="Slows player",ingredients={"2x Mushroom","2x Blue Crystal","1x Jade Stone","1x Plane Flower"}},
-	{name="Detox Potion",effect="Removes negative effects",ingredients={"1x Blue Crystal","1x Glowing Mushroom","2x Plane Flower","1x Elder Wood"}},
-	{name="Feather Potion",effect="Lowers gravity",ingredients={"1x Mushroom","1x Hazel Lily"}},
-	{name="Corrupted Vine Potion",effect="For Druid glove",ingredients={"3x Wild Vine","1x Blood Rose","1x Elder Wood","1x Dark Root","1x Jade Stone"}},
-	{name="Fallen Field Potion",effect="Unknown effect",ingredients={"2x Plane Flower","1x Hazel Lily"}},
+	{name="Stun Potion",effect="Stuns player",ingredients={"2x Plane Flower"}},{name="Explosion Potion",effect="Explodes on impact",ingredients={"2x Fire Flower","1x Red Crystal"}},
+	{name="Nightmare Potion",effect="Nightmare effect",ingredients={"3x Dark Root"}},{name="Grug Potion",effect="Grug effect",ingredients={"1x Mushroom"}},
+	{name="Speed Potion",effect="Increases walkspeed",ingredients={"1x Jade Stone","1x Autumn Sprout"}},{name="Transparency Potion",effect="Makes invisible",ingredients={"2x Hazel Lily","1x Blue Crystal"}},
+	{name="Confusion Potion",effect="Confuses player",ingredients={"1x Red Crystal","1x Blue Crystal","1x Glowing Mushroom"}},{name="Strength Potion",effect="Increases strength",ingredients={"1x Dire Flower","1x Red Crystal","1x Wild Vine"}},
+	{name="Speed Potion (Alt)",effect="Increases walkspeed",ingredients={"2x Mushroom","1x Plane Flower","1x Hazel Lily","1x Blue Crystal"}},{name="Frozen Potion",effect="Freezes player",ingredients={"2x Winter Rose","1x Wild Vine","1x Blue Crystal","1x Glowing Mushroom"}},
+	{name="Poison Potion",effect="Applies poison",ingredients={"2x Dark Root","1x Blood Rose","1x Red Crystal"}},{name="Invincibility Potion",effect="Grants invincibility",ingredients={"1x Elder Wood","2x Mushroom"}},
+	{name="Instant Death Potion",effect="Instantly kills",ingredients={"10x Dark Root","10x Blood Rose"}},{name="Slowdown Potion",effect="Slows player",ingredients={"2x Mushroom","2x Blue Crystal","1x Jade Stone","1x Plane Flower"}},
+	{name="Detox Potion",effect="Removes negative effects",ingredients={"1x Blue Crystal","1x Glowing Mushroom","2x Plane Flower","1x Elder Wood"}},{name="Feather Potion",effect="Lowers gravity",ingredients={"1x Mushroom","1x Hazel Lily"}},
+	{name="Corrupted Vine Potion",effect="For Druid glove",ingredients={"3x Wild Vine","1x Blood Rose","1x Elder Wood","1x Dark Root","1x Jade Stone"}},{name="Fallen Field Potion",effect="Unknown effect",ingredients={"2x Plane Flower","1x Hazel Lily"}},
 	{name="Lost Potion",effect="Unknown effect",ingredients={"3x Elder Wood","1x Blue Crystal","1x Red Crystal"}},
 }
 local function buildAlchUI()
@@ -873,21 +795,30 @@ local function startAlchemistHack()
 end
 local function stopAlchemistHack() alch.active=false if alch.gui then alch.gui:Destroy() alch.gui=nil end end
 
-------------------------------------------------------------------------
--- SLAP FARM (simplified: just activate, no clone/destroy)
-------------------------------------------------------------------------
+-- SLAP FARM — glove resized on flight, reverted on stop/walk toggle
 local sf={
 	active=false,flightOn=false,target=nil,speed=300,targetMode="All Players",
 	listMode="Blacklist",selPlayers={},ignVoid=true,ignRock=true,ignFar=true,ignFriends=false,
 	antiKick=false,walkMode=false,flightConn=nil,stepConn=nil,lastTarget=nil,
-	speedSlider=nil,speedBox=nil,speedKnob=nil,walkConn=nil,walkMoving=false,
-	walkAnim=nil,armConn=nil,
+	speedSlider=nil,speedBox=nil,speedKnob=nil,walkConn=nil,walkMoving=false,walkAnim=nil,
 }
 local SPAWN_CF=CFrame.new(-1210.16235,329.900879,3.98652339,1,0,0,0,1,0,0,0,1)
 local SF_ROCKS={"Diamond","MEGAROCK","CUSTOM","Spectator"}
+local GLOVE_BIG=Vector3.new(20,20,20)
+local GLOVE_NORMAL=Vector3.new(2.469702959060669,2.844676971435547,1.1790461540222168)
+
 local function sfChar() return Player.Character end
 local function sfHRP() return sfChar() and sfChar():FindFirstChild("HumanoidRootPart") end
 local function sfHasTool() local c=sfChar() return (c and c:FindFirstChildOfClass("Tool")) or Player.Backpack:FindFirstChildOfClass("Tool") end
+
+local function sfResizeTool(big)
+	local c=sfChar() if not c then return end
+	local tool=c:FindFirstChildOfClass("Tool") if not tool then tool=Player.Backpack:FindFirstChildOfClass("Tool") end
+	if not tool then return end
+	local glove=tool:FindFirstChild("Glove")
+	if glove then glove.Size=big and GLOVE_BIG or GLOVE_NORMAL end
+end
+
 local function sfFlight(char,on)
 	local root=char:FindFirstChild("HumanoidRootPart") if not root then return end
 	local hum=char:FindFirstChild("Humanoid")
@@ -896,11 +827,14 @@ local function sfFlight(char,on)
 		for _,n in ipairs({"SFFlightGyro","SFFlightVelocity"}) do local e=root:FindFirstChild(n) if e then e:Destroy() end end
 		local gyro=Instance.new("BodyGyro") gyro.Name="SFFlightGyro" gyro.D=400 gyro.P=1e6 gyro.MaxTorque=Vector3.new(1e6,1e6,1e6) gyro.CFrame=root.CFrame gyro.Parent=root
 		local vel=Instance.new("BodyVelocity") vel.Name="SFFlightVelocity" vel.Velocity=Vector3.new(0,0,0) vel.MaxForce=Vector3.new(1e6,1e6,1e6) vel.Parent=root
+		sfResizeTool(true)
 	else
 		if hum then hum.PlatformStand=false end
 		for _,n in ipairs({"SFFlightGyro","SFFlightVelocity"}) do local e=root:FindFirstChild(n) if e then e:Destroy() end end
+		sfResizeTool(false)
 	end
 end
+
 local function sfRockGlove(p) local ls=game.Players:FindFirstChild(p.Name) if not ls then return false end local ld=ls:FindFirstChild("leaderstats") if not ld then return false end local g=ld:FindFirstChild("Glove") if not g then return false end for _,rg in pairs(SF_ROCKS) do if g.Value==rg then return true end end return false end
 local function sfFilters(p)
 	local hrp=sfHRP() local pHasTool=(p.Character and p.Character:FindFirstChildOfClass("Tool")) or p.Backpack:FindFirstChildOfClass("Tool")
@@ -924,13 +858,11 @@ end
 local function sfStopWalk()
 	if sf.walkConn then sf.walkConn:Disconnect() sf.walkConn=nil end sf.walkMoving=false
 	if sf.walkAnim and sf.walkAnim.IsPlaying then sf.walkAnim:Stop() end sf.walkAnim=nil
-	if sf.armConn then sf.armConn:Disconnect() sf.armConn=nil end
 	local c=sfChar() local h=sfHRP() if c and c:FindFirstChild("Humanoid") and h then c.Humanoid:MoveTo(h.Position) end
 end
 local function sfWalkTo(p)
 	if sf.walkConn then sf.walkConn:Disconnect() sf.walkConn=nil end sf.walkMoving=true
 	local c=sfChar() local hum=c and c:FindFirstChild("Humanoid") if not hum then sf.walkMoving=false return end
-	-- load walk anim
 	if not (sf.walkAnim and sf.walkAnim.IsPlaying) then
 		local a2=hum:FindFirstChildOfClass("Animator") if a2 then local an=Instance.new("Animation") an.AnimationId="rbxassetid://913376220" sf.walkAnim=a2:LoadAnimation(an) sf.walkAnim.Priority=Enum.AnimationPriority.Action sf.walkAnim.Looped=true sf.walkAnim:Play() end
 	end
@@ -1043,13 +975,14 @@ local function buildSlapFarmSettings()
 	addSw("Ignore Far",function()return sf.ignFar end,function(v)sf.ignFar=v end)
 	addSw("Ignore Friends",function()return sf.ignFriends end,function(v)sf.ignFriends=v end)
 	addSw("Anti-Kick Delay",function()return sf.antiKick end,function(v)sf.antiKick=v end)
-	addSw("Walk Mode",function()return sf.walkMode end,function(v) sf.walkMode=v sfGraySpeed(v) if not v then sfStopWalk() end if v and sf.flightOn then sf.flightOn=false local c=sfChar() if c then sfFlight(c,false) end end end)
+	addSw("Walk Mode",function()return sf.walkMode end,function(v)
+		sf.walkMode=v sfGraySpeed(v) if not v then sfStopWalk() end
+		if v and sf.flightOn then sf.flightOn=false local c=sfChar() if c then sfFlight(c,false) end end
+	end)
 	SP.Size=UDim2.new(0.38,0,0,yOff+10) sfGraySpeed(sf.walkMode)
 end
 
-------------------------------------------------------------------------
 -- TOGGLE FUNCTIONS
-------------------------------------------------------------------------
 local toggleFunctions={
 	InfiniteYield=function(on) if on then loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))() end end,
 	Voidwalk=function(on) if on then startVoidwalk() else stopVoidwalk() end end,
@@ -1071,9 +1004,7 @@ local toggleFunctions={
 	Invisibility=function(on) if on then startInvisibility() else stopInvisibility() end end,
 }
 
-------------------------------------------------------------------------
 -- TILE BUILDER
-------------------------------------------------------------------------
 local panelConf={Reach=true,SlapFarm=true,AntiVoid=true}
 local function createScriptButton(data,grid)
 	local key=data.key local label=data.label local oneShot=data.oneShot or false local runOnce=data.runOnce or false
@@ -1126,9 +1057,7 @@ local function createScriptButton(data,grid)
 	end)
 end
 
-------------------------------------------------------------------------
 -- TILES
-------------------------------------------------------------------------
 local generalScripts={
 	{key="InfiniteYield",label="Infinite Yield",oneShot=true},{key="Voidwalk",label="Voidwalk"},
 	{key="AutoTP",label="Auto-TP"},{key="AntiAFK",label="Anti-AFK"},{key="Reach",label="Reach"},
@@ -1156,7 +1085,7 @@ createScriptButton({key="AutoPoltergeist",label="AutoPoltergeist",hoverWarning="
 local function runPocketDimension()
 	task.spawn(function() local ok,err=pcall(function() local char=Player.Character if not char or not char:FindFirstChild("HumanoidRootPart") then return end for _,door in pairs(workspace.PocketDimension.Doors:GetChildren()) do firetouchinterest(char.HumanoidRootPart,door,0) firetouchinterest(char.HumanoidRootPart,door,1) task.wait(0.75) char=Player.Character if char and char:FindFirstChild("Humanoid") then if char.Humanoid.Health<=0 then task.wait(5.5) char=Player.Character else break end end end end) if not ok then showToast("PocketDim error",T.RED) end end)
 end
-createScriptButton({key="PocketDimension",label="Pocket Dim",runOnce=true,runScript=runPocketDimension},ObtGrid)
+createScriptButton({key="PocketDimension",label="Auto[REDACTED]",runOnce=true,runScript=runPocketDimension},ObtGrid)
 
 local function runEasterEggs()
 	local Eggs=workspace:FindFirstChild("EasterHuntEggs") if not Eggs then return end
@@ -1167,17 +1096,15 @@ createScriptButton({key="AlchemistHack",label="AlchemistHack"},GlvGrid)
 
 buildReachSettings() buildAntiVoidSettings() buildSlapFarmSettings()
 
-------------------------------------------------------------------------
--- KEYBINDS + RIGHTSHIFT
-------------------------------------------------------------------------
+-- KEYBINDS
 UIS.InputBegan:Connect(function(input,gpe)
 	if input.KeyCode==Enum.KeyCode.RightShift then if panelOpen then closePanel() else openPanel() end return end
 	if gpe or bindingScript then return end
-	local runOnceMap={EasterEggs=runEasterEggs,IcyTrials=runIcyTrials,PocketDimension=runPocketDimension,AutoPsycho=runAutoPsycho,TelAviv=doTelAvivTP}
+	local rom={EasterEggs=runEasterEggs,IcyTrials=runIcyTrials,PocketDimension=runPocketDimension,AutoPsycho=runAutoPsycho,TelAviv=doTelAvivTP}
 	for key,keyCode in pairs(binds) do
 		if input.KeyCode==keyCode then
 			if key=="MouseTP" then doMouseTP()
-			elseif runOnceMap[key] then runOnceMap[key]()
+			elseif rom[key] then rom[key]()
 			else local ns=not states[key] states[key]=ns if tileRefs[key] then tileRefs[key](ns) end toggleFunctions[key](ns) end
 			break
 		end

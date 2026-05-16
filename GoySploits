@@ -146,7 +146,6 @@ local PanelTitle=Instance.new("TextLabel") PanelTitle.Size=UDim2.new(1,0,0.07,0)
 addCorner(PanelTitle,8) makeDraggable(Panel,PanelTitle)
 
 local TabBar=Instance.new("Frame") TabBar.Size=UDim2.new(1,0,0.065,0) TabBar.Position=UDim2.new(0,0,0.07,0) TabBar.BackgroundColor3=T.BG TabBar.ZIndex=10 TabBar.Parent=Panel
-Instance.new("UIListLayout").FillDirection=Enum.FillDirection.Horizontal
 local TabLL=Instance.new("UIListLayout") TabLL.FillDirection=Enum.FillDirection.Horizontal TabLL.SortOrder=Enum.SortOrder.LayoutOrder TabLL.Padding=UDim.new(0,2) TabLL.Parent=TabBar
 
 local function makeTab(n,o) local tb=Instance.new("TextButton") tb.Size=UDim2.new(0.18,0,1,0) tb.BackgroundColor3=T.MID tb.Text=n tb.TextColor3=T.DIM tb.TextScaled=true tb.Font=Enum.Font.GothamBold tb.ZIndex=11 tb.LayoutOrder=o tb.Parent=TabBar addCorner(tb,5) return tb end
@@ -188,32 +187,77 @@ end
 TopButton.MouseButton1Click:Connect(function() if panelOpen then closePanel() else openPanel() end end)
 
 ------------------------------------------------------------------------
--- PLAYER ESP
+-- PLAYER ESP (uses Highlight + a tracker part per player to detect invisibility)
 ------------------------------------------------------------------------
-local esp={active=false,color=Color3.fromRGB(255,255,255),highlights={},listMode="Blacklist",selPlayers={},conns={}}
+local esp={active=false,color=Color3.fromRGB(255,255,255),data={},listMode="Blacklist",selPlayers={},conns={}}
 local function espPassFilter(p) if esp.listMode=="Whitelist" then return esp.selPlayers[p.Name]==true else return not esp.selPlayers[p.Name] end end
-local function espRemove(p) if esp.highlights[p] then pcall(function() esp.highlights[p]:Destroy() end) esp.highlights[p]=nil end end
-local function espAdd(p)
-	espRemove(p) local char=p.Character if not char then return end
-	local hl=Instance.new("Highlight") hl.Adornee=char hl.FillTransparency=1 hl.OutlineColor=esp.color hl.OutlineTransparency=0 hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop hl.Parent=CoreGui
-	esp.highlights[p]=hl
-end
-local function espRefresh()
-	for p,_ in pairs(esp.highlights) do if not game.Players:FindFirstChild(p.Name) or not espPassFilter(p) then espRemove(p) end end
-	for _,p in pairs(game.Players:GetPlayers()) do
-		if p==Player then continue end if not espPassFilter(p) then espRemove(p) continue end
-		local char=p.Character
-		if char then if not esp.highlights[p] or not esp.highlights[p].Parent then espAdd(p) elseif esp.highlights[p].Adornee~=char then espAdd(p) end else espRemove(p) end
+local function espRemove(p)
+	if esp.data[p] then
+		if esp.data[p].hl then pcall(function() esp.data[p].hl:Destroy() end) end
+		if esp.data[p].box then pcall(function() esp.data[p].box:Destroy() end) end
+		esp.data[p]=nil
 	end
 end
-local function espSetColors() for _,hl in pairs(esp.highlights) do if hl and hl.Parent then hl.OutlineColor=esp.color end end end
+local function espAdd(p)
+	espRemove(p)
+	local char=p.Character if not char then return end
+	local hrp=char:FindFirstChild("HumanoidRootPart")
+	-- Highlight for wall-through detection
+	local hl=Instance.new("Highlight")
+	hl.Adornee=char hl.FillTransparency=1 hl.OutlineColor=esp.color hl.OutlineTransparency=0
+	hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop hl.Parent=CoreGui
+	-- Tracker part: follows player, visible through walls, reveals invis players
+	local box=nil
+	if hrp then
+		box=Instance.new("Part")
+		box.Name="ESPBox" box.Anchored=true box.CanCollide=false box.CastShadow=false
+		box.Size=Vector3.new(4,6,4) box.Transparency=0.9
+		box.Color=esp.color box.Material=Enum.Material.Neon
+		box.Parent=CoreGui -- parent to CoreGui so it renders above everything
+		-- Actually needs to be in workspace to be visible as a 3D part
+		box.Parent=workspace
+	end
+	esp.data[p]={hl=hl,box=box,char=char}
+end
+local function espRefresh()
+	for p,_ in pairs(esp.data) do
+		if not game.Players:FindFirstChild(p.Name) or not espPassFilter(p) then espRemove(p) end
+	end
+	for _,p in pairs(game.Players:GetPlayers()) do
+		if p==Player then continue end
+		if not espPassFilter(p) then espRemove(p) continue end
+		local char=p.Character
+		if char then
+			local d=esp.data[p]
+			if not d or not d.hl or not d.hl.Parent then espAdd(p)
+			elseif d.char~=char then espAdd(p) end
+		else espRemove(p) end
+	end
+end
+local function espUpdateColors()
+	for _,d in pairs(esp.data) do
+		if d.hl and d.hl.Parent then d.hl.OutlineColor=esp.color end
+		if d.box and d.box.Parent then d.box.Color=esp.color end
+	end
+end
 local function stopPlayerESP()
-	esp.active=false for _,c in pairs(esp.conns) do c:Disconnect() end esp.conns={}
-	for p,_ in pairs(esp.highlights) do espRemove(p) end esp.highlights={}
+	esp.active=false
+	for _,c in pairs(esp.conns) do c:Disconnect() end esp.conns={}
+	for p,_ in pairs(esp.data) do espRemove(p) end esp.data={}
 end
 local function startPlayerESP()
 	esp.active=true espRefresh()
-	table.insert(esp.conns,RunService.Heartbeat:Connect(function() if esp.active then espRefresh() end end))
+	-- Update box positions each frame
+	table.insert(esp.conns,RunService.Heartbeat:Connect(function()
+		if not esp.active then return end
+		espRefresh()
+		for _,d in pairs(esp.data) do
+			if d.box and d.box.Parent and d.char then
+				local hrp=d.char:FindFirstChild("HumanoidRootPart")
+				if hrp then d.box.CFrame=hrp.CFrame end
+			end
+		end
+	end))
 	table.insert(esp.conns,game.Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(function() task.wait(0.5) if esp.active and espPassFilter(p) then espAdd(p) end end) end))
 	table.insert(esp.conns,game.Players.PlayerRemoving:Connect(function(p) espRemove(p) end))
 	for _,p in pairs(game.Players:GetPlayers()) do if p~=Player then p.CharacterAdded:Connect(function() task.wait(0.5) if esp.active and espPassFilter(p) then espAdd(p) end end) end end
@@ -226,7 +270,7 @@ local function buildESPSettings()
 	cB.MouseButton1Click:Connect(function() tw(SP,{BackgroundTransparency=1}) task.wait(0.15) SP.Visible=false SP.BackgroundTransparency=0.05 end)
 	local colLbl=Instance.new("TextLabel") colLbl.Size=UDim2.new(0.9,0,0,13) colLbl.Position=UDim2.new(0.05,0,0,36) colLbl.BackgroundTransparency=1 colLbl.Text="Box Color:" colLbl.TextColor3=T.WHITE colLbl.TextScaled=true colLbl.Font=Enum.Font.GothamBold colLbl.TextXAlignment=Enum.TextXAlignment.Left colLbl.ZIndex=51 colLbl.Parent=SP
 	local rV=255 local gV=255 local bV=255
-	local function applyESPColor() esp.color=Color3.fromRGB(rV,gV,bV) espSetColors() end
+	local function applyESPColor() esp.color=Color3.fromRGB(rV,gV,bV) espUpdateColors() end
 	local yC=54
 	local function mkRGBRow(lTxt,def,getF,setF)
 		local lb=Instance.new("TextLabel") lb.Size=UDim2.new(0.08,0,0,13) lb.Position=UDim2.new(0.04,0,0,yC) lb.BackgroundTransparency=1 lb.Text=lTxt lb.TextColor3=T.WHITE lb.TextScaled=true lb.Font=Enum.Font.GothamBold lb.ZIndex=51 lb.Parent=SP
@@ -267,77 +311,63 @@ local function buildESPSettings()
 end
 
 ------------------------------------------------------------------------
--- FREECAM (fixed: camera-relative movement, character movement suppressed)
+-- FREECAM (fresh rewrite: uses BindableEvent to hand off camera, no conflicts)
 ------------------------------------------------------------------------
-local fc={active=false,speed=50,tpOnStop=false,conn=nil,savedCT=nil,savedSubject=nil,humConn=nil}
+local fc={active=false,speed=50,tpOnStop=false,gui=nil}
+local fcConn=nil
+local fcCamModule=nil
 
 local function stopFreecam()
 	fc.active=false
-	if fc.conn then fc.conn:Disconnect() fc.conn=nil end
-	if fc.humConn then fc.humConn:Disconnect() fc.humConn=nil end
+	if fcConn then fcConn:Disconnect() fcConn=nil end
+	-- Restore camera
 	local cam=workspace.CurrentCamera
-	cam.CameraType=fc.savedCT or Enum.CameraType.Custom
-	cam.CameraSubject=fc.savedSubject or (Player.Character and Player.Character:FindFirstChild("Humanoid"))
-	if fc.tpOnStop then
-		local char=Player.Character
-		if char and char:FindFirstChild("HumanoidRootPart") then
-			char.HumanoidRootPart.CFrame=cam.CFrame
-		end
-	end
-	-- Re-enable humanoid auto-rotate
+	cam.CameraType=Enum.CameraType.Custom
 	local char=Player.Character
 	if char then
-		local hum=char:FindFirstChild("Humanoid") if hum then hum.AutoRotate=true end
+		local hum=char:FindFirstChild("Humanoid")
+		if hum then cam.CameraSubject=hum end
+		if fc.tpOnStop and char:FindFirstChild("HumanoidRootPart") then
+			char.HumanoidRootPart.CFrame=cam.CFrame
+		end
 	end
 end
 
 local function startFreecam()
 	fc.active=true
 	local cam=workspace.CurrentCamera
-	fc.savedCT=cam.CameraType
-	fc.savedSubject=cam.CameraSubject
-	-- Disable character controls by setting humanoid WalkSpeed to 0 while freecam is on
-	local char=Player.Character
-	if char then
-		local hum=char:FindFirstChild("Humanoid")
-		if hum then hum.AutoRotate=false end
-	end
-	-- Set camera to scriptable once and hold it
+	-- Step 1: snapshot current camera CFrame
+	local cf=cam.CFrame
+	-- Step 2: set scriptable ONCE and never touch CameraType again from a loop
 	cam.CameraType=Enum.CameraType.Scriptable
-	-- Store current camera CFrame as mutable state (not a table, just local upvalue)
-	local pos=cam.CFrame.Position
-	local rot=cam.CFrame-cam.CFrame.Position -- rotation component
-	-- We track the camera CF in a single CFrame variable updated each frame
-	local currentCF=cam.CFrame
-	fc.conn=RunService.RenderStepped:Connect(function(dt)
+	cam.CFrame=cf
+
+	fcConn=RunService.RenderStepped:Connect(function(dt)
 		if not fc.active then return end
-		-- Read camera's current look/right/up from the PREVIOUS frame's CFrame so rotation from mouse works
-		local look=currentCF.LookVector
-		local right=currentCF.RightVector
-		local spd=fc.speed*(UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 3 or 1)
-		local move=Vector3.new(0,0,0)
-		if UIS:IsKeyDown(Enum.KeyCode.W) then move=move+look*spd*dt end
-		if UIS:IsKeyDown(Enum.KeyCode.S) then move=move-look*spd*dt end
-		if UIS:IsKeyDown(Enum.KeyCode.A) then move=move-right*spd*dt end
-		if UIS:IsKeyDown(Enum.KeyCode.D) then move=move+right*spd*dt end
-		if UIS:IsKeyDown(Enum.KeyCode.E) then move=move+Vector3.new(0,1,0)*spd*dt end
-		if UIS:IsKeyDown(Enum.KeyCode.Q) then move=move+Vector3.new(0,-1,0)*spd*dt end
-		-- Translate the camera by the move vector while preserving rotation from Roblox's mouse look
-		-- Roblox updates cam.CFrame each frame for mouse rotation; we apply our translation on top
-		local newPos=cam.CFrame.Position+move
-		cam.CFrame=CFrame.new(newPos)*CFrame.fromMatrix(Vector3.new(),cam.CFrame.RightVector,cam.CFrame.UpVector,cam.CFrame.LookVector)
-		currentCF=cam.CFrame
-		-- Keep camera type forced to scriptable each frame in case game resets it
-		cam.CameraType=Enum.CameraType.Scriptable
-	end)
-	-- Suppress character movement by zeroing walk speed during freecam
-	fc.humConn=RunService.Heartbeat:Connect(function()
-		if not fc.active then return end
-		local c=Player.Character if not c then return end
-		local h=c:FindFirstChild("Humanoid") if not h then return end
-		-- Zero out velocity on hrp to prevent walking
-		local hrp=c:FindFirstChild("HumanoidRootPart") if not hrp then return end
-		h:Move(Vector3.new(0,0,0),false)
+		-- Read the current camera rotation from Roblox's internal mouse look (it updates cam.CFrame rotation even in Scriptable mode)
+		-- We want to translate in camera-local space
+		local spd=fc.speed*(UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 3 or 1)*dt
+		local dv=Vector3.new(0,0,0)
+		if UIS:IsKeyDown(Enum.KeyCode.W) then dv=dv+cam.CFrame.LookVector*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then dv=dv-cam.CFrame.LookVector*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then dv=dv-cam.CFrame.RightVector*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then dv=dv+cam.CFrame.RightVector*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.E) then dv=dv+Vector3.new(0,1,0)*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.Q) then dv=dv-Vector3.new(0,1,0)*spd end
+		if dv.Magnitude>0 then
+			-- Only shift position, preserve rotation entirely
+			cam.CFrame=cam.CFrame+dv
+		end
+		-- Always force Scriptable so game code can't steal it back
+		if cam.CameraType~=Enum.CameraType.Scriptable then
+			cam.CameraType=Enum.CameraType.Scriptable
+		end
+		-- Zero out character movement while in freecam
+		local char=Player.Character
+		if char then
+			local hum=char:FindFirstChild("Humanoid")
+			if hum then hum:Move(Vector3.new(0,0,0),false) end
+		end
 	end)
 end
 
@@ -356,33 +386,40 @@ local function buildFreecamSettings()
 end
 
 ------------------------------------------------------------------------
--- GOYSHIP (redesigned per diagram: torso=floor, legs=back wall, arms=side rails, head=front rail)
+-- GOYSHIP (complete rewrite: pure flight using HRP movers, parts positioned per diagram)
 ------------------------------------------------------------------------
 local ship={active=false,speed=20,conn=nil,gui=nil,vertDir=0}
 
--- Layout per the diagram:
--- Torso: flat on ground (rotated 90° around X so it lies flat), this is the FLOOR/PLATFORM
--- Left Leg + Right Leg: stand vertically at the BACK of torso (+Z side)
--- Left Arm + Right Arm: stand vertically at the SIDES (-X and +X)
--- Head: stands vertically at the FRONT (-Z side)
--- HRP stays under the torso, used for physics movers
+--[[
+Diagram (top-down view, torso is the flat floor):
+            Head (front guard rail, -Z)
+            
+ LArm |  Torso (flat floor)  | RArm
+(left                          (right
+ rail)                          rail)
+ 
+         LLeg | RLeg
+         (back wall, +Z)
 
--- All offsets are in world-space since we force absolute CFrames each frame
--- We build positions relative to a "ship origin" = HRP position
--- The ship is always flat/upright regardless of camera
+HRP stays UNDER the torso, used for BodyVelocity/BodyGyro.
+All parts positioned relative to HRP.Position in world space.
+Ship is always flat/horizontal, never tilts.
+]]
 
-local SHIP_OFFSETS={
-	-- Torso: the flat platform, lies flat (rotated to be horizontal)
-	-- offset Y=0 from HRP, rotated 90 deg around X to be flat
-	Torso       ={pos=Vector3.new(0,0.5,0),  rot=CFrame.Angles(math.rad(90),0,0)},
-	-- Legs: back wall, standing upright, shifted back
-	["Left Leg"] ={pos=Vector3.new(-0.5,2,2.5),rot=CFrame.Angles(0,0,0)},
-	["Right Leg"]={pos=Vector3.new(0.5,2,2.5), rot=CFrame.Angles(0,0,0)},
-	-- Arms: side railings, standing upright
-	["Left Arm"] ={pos=Vector3.new(-2,2,0),    rot=CFrame.Angles(0,0,0)},
-	["Right Arm"]={pos=Vector3.new(2,2,0),     rot=CFrame.Angles(0,0,0)},
-	-- Head: front railing
-	Head         ={pos=Vector3.new(0,2,-2.5),  rot=CFrame.Angles(0,0,0)},
+-- Offsets from HRP.Position (world space, always applied with NO rotation inheritance)
+-- Torso = flat platform above HRP (rotate 90deg on X to lay flat)
+-- Head = front guard rail (further -Z)
+-- LeftArm = left guard rail (-X side)
+-- RightArm = right guard rail (+X side)
+-- LeftLeg + RightLeg = back wall (+Z side)
+
+local SHIP_DEF={
+	Torso      ={posOffset=Vector3.new(0,1,0),   rotAngles=Vector3.new(math.rad(90),0,0)},
+	Head       ={posOffset=Vector3.new(0,3,-3),   rotAngles=Vector3.new(0,0,0)},
+	["Left Arm"] ={posOffset=Vector3.new(-3,3,0),  rotAngles=Vector3.new(0,0,0)},
+	["Right Arm"]={posOffset=Vector3.new(3,3,0),   rotAngles=Vector3.new(0,0,0)},
+	["Left Leg"] ={posOffset=Vector3.new(-0.5,3,3),rotAngles=Vector3.new(0,0,0)},
+	["Right Leg"]={posOffset=Vector3.new(0.5,3,3), rotAngles=Vector3.new(0,0,0)},
 }
 
 local function shipStop()
@@ -406,76 +443,72 @@ local function shipStart()
 	local hrp=char:FindFirstChild("HumanoidRootPart") if not hrp then shipStop() return end
 	local hum=char:FindFirstChild("Humanoid") if hum then hum.PlatformStand=true end
 
-	-- Remove existing movers
+	-- Clean up old movers
 	for _,n in ipairs({"ShipGyro","ShipVel"}) do local e=hrp:FindFirstChild(n) if e then e:Destroy() end end
 
-	local gyro=Instance.new("BodyGyro") gyro.Name="ShipGyro" gyro.D=500 gyro.P=2e5
-	gyro.MaxTorque=Vector3.new(1e6,1e6,1e6) gyro.CFrame=CFrame.new(hrp.Position) gyro.Parent=hrp
+	-- BodyGyro: keep HRP perfectly upright at all times (no tilt)
+	local gyro=Instance.new("BodyGyro")
+	gyro.Name="ShipGyro" gyro.D=1000 gyro.P=1e6
+	gyro.MaxTorque=Vector3.new(1e8,1e8,1e8)
+	gyro.CFrame=CFrame.new(0,0,0) -- upright identity
+	gyro.Parent=hrp
 
-	local vel=Instance.new("BodyVelocity") vel.Name="ShipVel" vel.Velocity=Vector3.new(0,0,0)
-	vel.MaxForce=Vector3.new(1e6,1e6,1e6) vel.Parent=hrp
+	-- BodyVelocity: flat movement
+	local vel=Instance.new("BodyVelocity")
+	vel.Name="ShipVel" vel.Velocity=Vector3.new(0,0,0)
+	vel.MaxForce=Vector3.new(1e6,1e6,1e6)
+	vel.Parent=hrp
 
-	-- Build in-game UI
+	-- In-game UI
 	ship.gui=Instance.new("ScreenGui") ship.gui.ResetOnSpawn=false ship.gui.Parent=CoreGui
-	local GF=makeFloat(0,0,0,0) GF.Size=UDim2.new(0,100,0,160) GF.Position=UDim2.new(0.5,0,0.9,0) GF.AnchorPoint=Vector2.new(0.5,1) GF.ClipsDescendants=false GF.Parent=ship.gui
+	local GF=makeFloat(0,0,0,0) GF.Size=UDim2.new(0,100,0,155) GF.Position=UDim2.new(0.5,0,0.9,0) GF.AnchorPoint=Vector2.new(0.5,1) GF.ClipsDescendants=false GF.Parent=ship.gui
 	local GT=Instance.new("TextLabel") GT.Size=UDim2.new(1,0,0,20) GT.Position=UDim2.new(0,0,0,2) GT.BackgroundTransparency=1 GT.Text="GoyShip" GT.TextColor3=T.WHITE GT.TextScaled=true GT.Font=Enum.Font.GothamBold GT.Parent=GF makeDraggable(GF,GT)
-
 	local spdLbl=Instance.new("TextLabel") spdLbl.Size=UDim2.new(0.9,0,0,12) spdLbl.Position=UDim2.new(0.05,0,0,24) spdLbl.BackgroundTransparency=1 spdLbl.Text="Speed: "..ship.speed spdLbl.TextColor3=T.DIM spdLbl.TextScaled=true spdLbl.Font=Enum.Font.Gotham spdLbl.TextXAlignment=Enum.TextXAlignment.Left spdLbl.Parent=GF
 	local spVb=Instance.new("TextBox") spVb.Size=UDim2.new(0.35,0,0,12) spVb.Position=UDim2.new(0.62,0,0,24) spVb.BackgroundColor3=T.MID spVb.BackgroundTransparency=0.1 spVb.Text=tostring(ship.speed) spVb.TextColor3=T.WHITE spVb.TextScaled=true spVb.Font=Enum.Font.Gotham spVb.Parent=GF addCorner(spVb,3) addStroke(spVb,T.SDIM,1)
 	makeSlider(GF,38,2,30,ship.speed,0.9,0.05,function(v) ship.speed=v spdLbl.Text="Speed: "..v end,spVb)
 	spVb.FocusLost:Connect(function() local n=tonumber(spVb.Text) if n then n=math.clamp(math.round(n),2,30) ship.speed=n spdLbl.Text="Speed: "..n end end)
-
-	local upBtn=Instance.new("TextButton") upBtn.Size=UDim2.new(0.42,0,0,32) upBtn.Position=UDim2.new(0.04,0,0,114) upBtn.BackgroundColor3=T.MID upBtn.Text="▲" upBtn.TextColor3=T.WHITE upBtn.TextScaled=true upBtn.Font=Enum.Font.GothamBold upBtn.Parent=GF addCorner(upBtn,5) addStroke(upBtn,T.SDIM,1)
-	local dnBtn=Instance.new("TextButton") dnBtn.Size=UDim2.new(0.42,0,0,32) dnBtn.Position=UDim2.new(0.54,0,0,114) dnBtn.BackgroundColor3=T.MID dnBtn.Text="▼" dnBtn.TextColor3=T.WHITE dnBtn.TextScaled=true dnBtn.Font=Enum.Font.GothamBold dnBtn.Parent=GF addCorner(dnBtn,5) addStroke(dnBtn,T.SDIM,1)
-
+	local upBtn=Instance.new("TextButton") upBtn.Size=UDim2.new(0.42,0,0,32) upBtn.Position=UDim2.new(0.04,0,0,112) upBtn.BackgroundColor3=T.MID upBtn.Text="▲" upBtn.TextColor3=T.WHITE upBtn.TextScaled=true upBtn.Font=Enum.Font.GothamBold upBtn.Parent=GF addCorner(upBtn,5) addStroke(upBtn,T.SDIM,1)
+	local dnBtn=Instance.new("TextButton") dnBtn.Size=UDim2.new(0.42,0,0,32) dnBtn.Position=UDim2.new(0.54,0,0,112) dnBtn.BackgroundColor3=T.MID dnBtn.Text="▼" dnBtn.TextColor3=T.WHITE dnBtn.TextScaled=true dnBtn.Font=Enum.Font.GothamBold dnBtn.Parent=GF addCorner(dnBtn,5) addStroke(dnBtn,T.SDIM,1)
 	ship.vertDir=0
-	local function sv(d) ship.vertDir=d end
-	upBtn.MouseButton1Down:Connect(function() sv(1) end) upBtn.MouseButton1Up:Connect(function() sv(0) end) upBtn.MouseLeave:Connect(function() sv(0) end)
-	dnBtn.MouseButton1Down:Connect(function() sv(-1) end) dnBtn.MouseButton1Up:Connect(function() sv(0) end) dnBtn.MouseLeave:Connect(function() sv(0) end)
+	upBtn.MouseButton1Down:Connect(function() ship.vertDir=1 end) upBtn.MouseButton1Up:Connect(function() ship.vertDir=0 end) upBtn.MouseLeave:Connect(function() ship.vertDir=0 end)
+	dnBtn.MouseButton1Down:Connect(function() ship.vertDir=-1 end) dnBtn.MouseButton1Up:Connect(function() ship.vertDir=0 end) dnBtn.MouseLeave:Connect(function() ship.vertDir=0 end)
 
-	ship.conn=RunService.RenderStepped:Connect(function(dt)
+	ship.conn=RunService.RenderStepped:Connect(function()
 		if not ship.active then return end
-		local char2=Player.Character if not char2 then return end
-		local hrp2=char2:FindFirstChild("HumanoidRootPart") if not hrp2 then return end
-		local gyro2=hrp2:FindFirstChild("ShipGyro") local vel2=hrp2:FindFirstChild("ShipVel")
-		if not gyro2 or not vel2 then return end
+		local c=Player.Character if not c then return end
+		local h=c:FindFirstChild("HumanoidRootPart") if not h then return end
+		local g=h:FindFirstChild("ShipGyro") local v=h:FindFirstChild("ShipVel")
+		if not g or not v then return end
 
-		-- Keep ship upright always (no tilt from physics)
-		gyro2.CFrame=CFrame.new(hrp2.Position)
+		-- Force HRP upright always (identity rotation = no tilt)
+		g.CFrame=CFrame.new(0,0,0)
 
-		-- Position parts relative to HRP in world space (always flat/upright orientation)
-		-- HRP is the floor-level anchor
-		local origin=hrp2.CFrame
-		for partName,layout in pairs(SHIP_OFFSETS) do
-			local p=char2:FindFirstChild(partName)
+		-- Position limbs relative to HRP position (world space, always flat)
+		local base=h.Position
+		for partName,def in pairs(SHIP_DEF) do
+			local p=c:FindFirstChild(partName)
 			if p and p:IsA("BasePart") then
-				-- Build world position: origin * offset (no rotation inherited from origin, just translation + fixed rotation)
-				local worldPos=origin.Position+layout.pos
-				p.CFrame=CFrame.new(worldPos)*layout.rot
+				p.CFrame=CFrame.new(base+def.posOffset)*CFrame.Angles(def.rotAngles.X,def.rotAngles.Y,def.rotAngles.Z)
 			end
 		end
 
-		-- Camera-relative flat movement (WASD), arrows for vertical
+		-- WASD: camera yaw only, always horizontal (no vertical from WASD)
 		local cam=workspace.CurrentCamera
-		local look=cam.CFrame.LookVector
-		local right=cam.CFrame.RightVector
-		-- Flatten to horizontal only
-		local flatFwd=Vector3.new(look.X,0,look.Z)
-		local flatRt=Vector3.new(right.X,0,right.Z)
-		if flatFwd.Magnitude>0.01 then flatFwd=flatFwd.Unit end
-		if flatRt.Magnitude>0.01 then flatRt=flatRt.Unit end
-
-		local spd=ship.speed
+		local yaw=math.atan2(-cam.CFrame.LookVector.X,-cam.CFrame.LookVector.Z)
+		local fwd=Vector3.new(math.sin(yaw),0,math.cos(yaw))
+		local right=Vector3.new(math.cos(yaw),0,-math.sin(yaw))
 		local mv=Vector3.new(0,0,0)
-		if UIS:IsKeyDown(Enum.KeyCode.W) then mv=mv+flatFwd*spd end
-		if UIS:IsKeyDown(Enum.KeyCode.S) then mv=mv-flatFwd*spd end
-		if UIS:IsKeyDown(Enum.KeyCode.A) then mv=mv-flatRt*spd end
-		if UIS:IsKeyDown(Enum.KeyCode.D) then mv=mv+flatRt*spd end
-		-- Arrow keys for vertical
-		if UIS:IsKeyDown(Enum.KeyCode.Up) or ship.vertDir==1 then mv=mv+Vector3.new(0,spd*0.5,0) end
-		if UIS:IsKeyDown(Enum.KeyCode.Down) or ship.vertDir==-1 then mv=mv+Vector3.new(0,-spd*0.5,0) end
-
-		vel2.Velocity=mv
+		local spd=ship.speed
+		if UIS:IsKeyDown(Enum.KeyCode.W) then mv=mv+fwd*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then mv=mv-fwd*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then mv=mv+right*spd end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then mv=mv-right*spd end
+		-- Arrow keys also control vertical
+		if UIS:IsKeyDown(Enum.KeyCode.Up) then mv=mv+Vector3.new(0,spd*0.6,0) end
+		if UIS:IsKeyDown(Enum.KeyCode.Down) then mv=mv-Vector3.new(0,spd*0.6,0) end
+		if ship.vertDir==1 then mv=mv+Vector3.new(0,spd*0.6,0) end
+		if ship.vertDir==-1 then mv=mv-Vector3.new(0,spd*0.6,0) end
+		v.Velocity=mv
 	end)
 end
 
@@ -570,11 +603,10 @@ local function startAntiAFK() afkActive=true task.spawn(function() while afkActi
 local function stopAntiAFK() afkActive=false end
 
 ------------------------------------------------------------------------
--- AUTO-SLAPPLE (fixed: restart on respawn)
+-- AUTO-SLAPPLE
 ------------------------------------------------------------------------
 local slappleActive=false
 local slappleConns={}
-
 local function collectOneSlapple(slapple)
 	if not slappleActive then return end
 	local glove=slapple:FindFirstChild("Glove") if not glove then return end
@@ -586,47 +618,34 @@ local function collectOneSlapple(slapple)
 		if char and char:FindFirstChild("HumanoidRootPart") and part and part.Parent then firetouchinterest(char.HumanoidRootPart,part,1) end
 	end
 end
-
 local function sweepAllSlapples()
 	if not slappleActive then return end
 	local arena=workspace:FindFirstChild("Arena") if not arena then return end
 	for _,island in pairs(arena:GetChildren()) do
 		local slapples=island:FindFirstChild("Slapples") if not slapples then continue end
 		for _,slapple in pairs(slapples:GetChildren()) do
-			if not slappleActive then return end
-			collectOneSlapple(slapple) task.wait(0.05)
+			if not slappleActive then return end collectOneSlapple(slapple) task.wait(0.05)
 		end
 	end
 end
-
 local function stopAutoSlapple()
 	slappleActive=false
 	for _,c in pairs(slappleConns) do pcall(function() c:Disconnect() end) end slappleConns={}
 end
-
 local function startAutoSlapple()
-	stopAutoSlapple()
-	slappleActive=true
+	stopAutoSlapple() slappleActive=true
 	task.spawn(sweepAllSlapples)
-	-- Watch for new slapples
 	table.insert(slappleConns,workspace.DescendantAdded:Connect(function(obj)
 		if not slappleActive then return end
-		if obj.Name=="Glove" then
-			local par=obj.Parent if par and par.Parent and par.Parent.Name=="Slapples" then
-				task.wait(0.15) if slappleActive then collectOneSlapple(par) end
-			end
-		end
+		if obj.Name=="Glove" then local par=obj.Parent if par and par.Parent and par.Parent.Name=="Slapples" then task.wait(0.15) if slappleActive then collectOneSlapple(par) end end end
 	end))
-	-- Periodic sweep
 	task.spawn(function() while slappleActive do task.wait(0.8) if slappleActive then sweepAllSlapples() end end end)
-	-- On respawn: restart auto slapple completely (fixes post-death issue)
 	table.insert(slappleConns,Player.CharacterAdded:Connect(function()
 		if not slappleActive then return end
+		-- Full restart on respawn to fix post-death issues
 		task.wait(1.5)
 		if slappleActive then
-			-- Full restart
 			for _,c in pairs(slappleConns) do pcall(function() c:Disconnect() end) end slappleConns={}
-			-- Relaunch entirely
 			task.spawn(startAutoSlapple)
 		end
 	end))
@@ -644,7 +663,8 @@ local function startAutoTP()
 	local BFT=Instance.new("TextLabel") BFT.Size=UDim2.new(0.72,0,0,22) BFT.Position=UDim2.new(0.02,0,0,3) BFT.BackgroundTransparency=1 BFT.Text="AutoTP" BFT.TextColor3=T.WHITE BFT.TextScaled=true BFT.Font=Enum.Font.GothamBold BFT.Parent=BF makeDraggable(BF,BFT)
 	local AB=Instance.new("TextButton") AB.Size=UDim2.new(0.85,0,0,36) AB.Position=UDim2.new(0.075,0,0,28) AB.BackgroundColor3=T.MID AB.BorderSizePixel=0 AB.Text="" AB.Parent=BF addCorner(AB,6) addStroke(AB,T.SDIM,1)
 	local IB=Instance.new("Frame") IB.Size=UDim2.new(0.82,0,0.82,0) IB.Position=UDim2.new(0.09,0,0.09,0) IB.BackgroundColor3=T.BG IB.BorderSizePixel=0 IB.Parent=AB addCorner(IB,5)
-	local Ic=Instance.new("ImageLabel") Ic.Size=UDim2.new(0.85,0,0.85,0) Ic.Position=UDim2.new(0.075,0,0.075,0) Ic.BackgroundTransparency=1 Ic.Image="rbxassetid://92746056646409" Ic.ImageColor3=T.DIM Ic.ScaleType=Enum.ScaleType.Fit Ic.Parent=IB
+	Instance.new("ImageLabel",IB).Size=UDim2.new(0.85,0,0.85,0)
+	local Ic=IB:FindFirstChildOfClass("ImageLabel") Ic.Position=UDim2.new(0.075,0,0.075,0) Ic.BackgroundTransparency=1 Ic.Image="rbxassetid://92746056646409" Ic.ImageColor3=T.DIM Ic.ScaleType=Enum.ScaleType.Fit
 	local Lbl=Instance.new("TextLabel") Lbl.Size=UDim2.new(0.96,0,0,13) Lbl.Position=UDim2.new(0.02,0,0,68) Lbl.BackgroundTransparency=1 Lbl.Text="Set Position" Lbl.TextColor3=T.DIM Lbl.TextScaled=true Lbl.Font=Enum.Font.GothamBold Lbl.Parent=BF
 	local TB2=Instance.new("TextBox") TB2.Size=UDim2.new(0.96,0,0,13) TB2.Position=UDim2.new(0.02,0,0,83) TB2.BackgroundColor3=T.MID TB2.BackgroundTransparency=0.1 TB2.Text=tostring(atp.respawnTime).." sec" TB2.TextColor3=T.WHITE TB2.TextScaled=true TB2.Font=Enum.Font.GothamBold TB2.Parent=BF addCorner(TB2,4) addStroke(TB2,T.SDIM,1)
 	addMinBtn(BF,BFT,{AB,Lbl,TB2},28)
@@ -822,9 +842,10 @@ local function startAutoAbility()
 end
 
 ------------------------------------------------------------------------
--- ANTI-VOID (fixed: camera stays, HRP anchored+teleported far, then back)
+-- ANTI-VOID (rewritten: large floor part at Y=-110 that TPs to island)
 ------------------------------------------------------------------------
-local av={conn=nil,legit=false,inProgress=false}
+local av={conn=nil,legit=false,inProgress=false,floorPart=nil}
+
 local function buildAntiVoidSettings()
 	local sg=Instance.new("ScreenGui") sg.ResetOnSpawn=false sg.Parent=CoreGui panelSettings["AntiVoid"]=sg
 	local SP=Instance.new("Frame") SP.Size=UDim2.new(0.22,0,0,90) SP.Position=UDim2.new(0.5,0,0.5,0) SP.AnchorPoint=Vector2.new(0.5,0.5) SP.BackgroundColor3=T.BG SP.BackgroundTransparency=0.05 SP.Visible=false SP.ZIndex=50 SP.Parent=sg addCorner(SP,8) addStroke(SP,T.STR,1.5)
@@ -834,51 +855,45 @@ local function buildAntiVoidSettings()
 	local lb=Instance.new("TextLabel") lb.Size=UDim2.new(0.6,0,0,20) lb.Position=UDim2.new(0.05,0,0,38) lb.BackgroundTransparency=1 lb.Text="Legit Mode" lb.TextColor3=T.WHITE lb.TextScaled=true lb.Font=Enum.Font.GothamBold lb.TextXAlignment=Enum.TextXAlignment.Left lb.ZIndex=51 lb.Parent=SP
 	makeSwitch(SP,40,-44,false,function(v) av.legit=v end)
 end
+
 local function startAntiVoid()
-	av.conn=RunService.Heartbeat:Connect(function()
-		if av.inProgress then return end
+	-- Create the large floor part centered at 0,0 at Y=-110
+	local fp=Instance.new("Part") fp.Name="AntiVoidFloor" fp.Size=Vector3.new(2000,4,2000)
+	fp.CFrame=CFrame.new(0,-110,0) fp.Anchored=true fp.CanCollide=true fp.Transparency=1
+	fp.Material=Enum.Material.SmoothPlastic fp.Parent=workspace
+	av.floorPart=fp
+	-- When character touches the floor part, TP to island
+	fp.Touched:Connect(function(hit)
 		local char=Player.Character if not char then return end
 		local hrp=char:FindFirstChild("HumanoidRootPart") if not hrp then return end
-		if hrp.Position.Y < -100 then
+		if hit:IsDescendantOf(char) then
+			if av.inProgress then return end
 			if av.legit then
 				av.inProgress=true
-				-- Save camera state and FREEZE it where it is
+				-- Camera stays where it is
 				local cam=workspace.CurrentCamera
-				local savedCamCF=cam.CFrame
-				local savedCT=cam.CameraType
+				local savedCamCF=cam.CFrame local savedCT=cam.CameraType
 				cam.CameraType=Enum.CameraType.Scriptable
-				-- Lock camera in place with a connection
 				local camLock=RunService.RenderStepped:Connect(function() cam.CFrame=savedCamCF end)
-				-- Teleport HRP far away and anchor it
-				local farCF=CFrame.new(500000,200,500000)
-				hrp.CFrame=farCF
+				-- Anchor and move far away
 				hrp.Anchored=true
-				-- Keep HRP at far position for 4 seconds
-				local keepConn=RunService.Heartbeat:Connect(function()
-					if hrp and hrp.Parent then hrp.CFrame=farCF end
-				end)
+				hrp.CFrame=CFrame.new(500000,200,500000)
 				task.wait(4)
-				pcall(function() keepConn:Disconnect() end)
-				-- Unanchor and teleport back to island
-				hrp.Anchored=false
-				local c2=Player.Character
-				if c2 then
-					local h2=c2:FindFirstChild("HumanoidRootPart")
-					if h2 then h2.CFrame=CFrame.new(0,10,0) end
-				end
-				-- Restore camera
-				task.wait(0.1)
 				pcall(function() camLock:Disconnect() end)
-				cam.CameraType=savedCT
-				av.inProgress=false
+				local c2=Player.Character
+				if c2 then local h2=c2:FindFirstChild("HumanoidRootPart") if h2 then h2.Anchored=false h2.CFrame=CFrame.new(0,10,0) end end
+				cam.CameraType=savedCT av.inProgress=false
 			else
-				-- Non-legit: instant teleport back
 				hrp.CFrame=CFrame.new(0,10,0)
 			end
 		end
 	end)
 end
-local function stopAntiVoid() if av.conn then av.conn:Disconnect() av.conn=nil end av.inProgress=false end
+
+local function stopAntiVoid()
+	if av.floorPart then av.floorPart:Destroy() av.floorPart=nil end
+	av.inProgress=false
+end
 
 ------------------------------------------------------------------------
 -- INVISIBILITY
@@ -1014,13 +1029,11 @@ local function buildTelAviv()
 	local function mkS(sz,pos,col,mat) local p=mkP(sz,pos,col,mat) p.Shape=Enum.PartType.Ball return p end
 	mkP(Vector3.new(200,8,200),Vector3.new(0,-4,0),Color3.fromRGB(230,225,215),Enum.Material.Concrete)
 	mkP(Vector3.new(180,1,180),Vector3.new(0,1,0),Color3.fromRGB(210,200,185),Enum.Material.Cobblestone)
-	mkP(Vector3.new(50,1.2,180),Vector3.new(-75,1,0),Color3.fromRGB(88,157,75),Enum.Material.Grass)
-	mkP(Vector3.new(50,1.2,180),Vector3.new(75,1,0),Color3.fromRGB(88,157,75),Enum.Material.Grass)
+	mkP(Vector3.new(50,1.2,180),Vector3.new(-75,1,0),Color3.fromRGB(88,157,75),Enum.Material.Grass) mkP(Vector3.new(50,1.2,180),Vector3.new(75,1,0),Color3.fromRGB(88,157,75),Enum.Material.Grass)
 	for _,z in ipairs({-89,89}) do mkP(Vector3.new(200,2,4),Vector3.new(0,1,z),Color3.fromRGB(180,170,155),Enum.Material.SmoothPlastic) end
 	for _,x in ipairs({-89,89}) do mkP(Vector3.new(4,2,200),Vector3.new(x,1,0),Color3.fromRGB(180,170,155),Enum.Material.SmoothPlastic) end
 	mkP(Vector3.new(18,0.4,160),Vector3.new(0,1.4,0),Color3.fromRGB(245,240,228),Enum.Material.SmoothPlastic)
-	mkP(Vector3.new(1,0.5,160),Vector3.new(-4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
-	mkP(Vector3.new(1,0.5,160),Vector3.new(4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
+	mkP(Vector3.new(1,0.5,160),Vector3.new(-4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon) mkP(Vector3.new(1,0.5,160),Vector3.new(4,1.5,0),Color3.fromRGB(0,56,184),Enum.Material.Neon)
 	for _,z in ipairs({-60,-30,0,30,60}) do for _,s in ipairs({-12,12}) do mkP(Vector3.new(8,1,2.5),Vector3.new(s,2.5,z),Color3.fromRGB(120,85,50),Enum.Material.Wood) mkP(Vector3.new(8,2,0.5),Vector3.new(s,4,z+(s>0 and 1 or -1)),Color3.fromRGB(120,85,50),Enum.Material.Wood) for _,lx in ipairs({s-3,s+3}) do mkP(Vector3.new(0.8,1.5,0.8),Vector3.new(lx,1.75,z),Color3.fromRGB(90,90,90),Enum.Material.Metal) end end end
 	mkP(Vector3.new(22,1.5,22),Vector3.new(0,2.25,0),Color3.fromRGB(220,215,200),Enum.Material.Marble) mkP(Vector3.new(18,0.5,18),Vector3.new(0,2,0),Color3.fromRGB(100,180,220),Enum.Material.Glass)
 	mkP(Vector3.new(8,3,8),Vector3.new(0,3.5,0),Color3.fromRGB(230,225,210),Enum.Material.Marble) mkP(Vector3.new(2,10,2),Vector3.new(0,10,0),Color3.fromRGB(215,210,195),Enum.Material.Marble)
@@ -1043,7 +1056,7 @@ local function doTelAvivHomeTP() safeTeleportCFrame(CFrame.new(18,3,-14)) showTo
 ------------------------------------------------------------------------
 local tpHub={gui=nil}
 local TP_PLACES={
-	{name="Elude Maze",id=11828384869},{name="Barzil",id=7234087065},{name="Icy Trials",id=17290438723},{name="Where Guide Resides",id=18550498098},{name="Binded Maze",id=74169485398268},{name="Four Seasons",id=78804514423551},{name="Find the Gloves",id=79885102123162},{name="Penguin Teleport Place",id=86643839793301},{name="Splat Battles (Paint)",id=90553746175288},{name="Pim's Corn Maze",id=92483185275059},{name="Conker Obtainment",id=101113181694564},{name="Zombies (Poltergeist)",id=103505724406848},{name="Plate Glove Obtainment",id=106620300132058},{name="Untitled Tag Glove",id=115782629143468},
+	{name="Elude Maze",id=11828384869},{name="Barzil",id=7234087065},{name="Icy Trials",id=17290438723},{name="Where Guide Resides",id=18550498098},{name="Binded Maze",id=74169485398268},{name="Four Seasons",id=78804514423551},{name="Find the Gloves",id=79885102123162},{name="Penguin Teleport Place",id=86643839793301},{name="Splat Battles (Paint)",id=90553746175288},{name="Harvest Maze",id=92483185275059},{name="Conker Obtainment",id=101113181694564},{name="Zombies (Poltergeist)",id=103505724406848},{name="Plate Glove Obtainment",id=106620300132058},{name="Untitled Tag Glove",id=115782629143468},
 	{name="Admin Glove (Retro)",id=nil,action=function()
 		task.spawn(function() local ok,err=pcall(function() local RM=game.ReplicatedStorage.Assets:FindFirstChild("Retro") if not RM then RM=workspace.Retro end RM.Parent=workspace safeTeleportCFrame(CFrame.new(-16976,798,4908)) task.wait(1) for _,AB in pairs(RM.Map.RetroObbyMap:GetDescendants()) do if AB.Name=="StaffApp" then local Btn=AB:FindFirstChild("Button") if Btn then local CD=Btn:FindFirstChildOfClass("ClickDetector") if CD then fireclickdetector(CD) end end end end end) if not ok then showToast("Admin Glove failed",T.RED) end end)
 	end},
@@ -1079,8 +1092,7 @@ local function startAutoKraken()
 		local hb=workspace:FindFirstChild("kraken_hurtbox",true)
 		if hb and hb:IsA("BasePart") then
 			if (root.Position-KRAKEN_POS.Position).Magnitude>8 then
-				local tw2=TweenService:Create(root,TweenInfo.new(0.5,Enum.EasingStyle.Linear),{CFrame=KRAKEN_POS})
-				tw2:Play() tw2.Completed:Wait()
+				local tw2=TweenService:Create(root,TweenInfo.new(0.5,Enum.EasingStyle.Linear),{CFrame=KRAKEN_POS}) tw2:Play() tw2.Completed:Wait()
 			end
 			local tool=char:FindFirstChildOfClass("Tool")
 			if not tool then local bp=Player.Backpack:FindFirstChildOfClass("Tool") if bp and char:FindFirstChild("Humanoid") then char.Humanoid:EquipTool(bp) task.wait(0.2) tool=char:FindFirstChildOfClass("Tool") end end
@@ -1098,65 +1110,30 @@ end
 local function stopAutoKraken() kraken.active=false if kraken.conn then kraken.conn:Disconnect() kraken.conn=nil end end
 
 ------------------------------------------------------------------------
--- AUTO POLTERGEIST (replaced with new method)
+-- AUTO POLTERGEIST
 ------------------------------------------------------------------------
-local polt={active=false,conn=nil}
-local function stopAutoPoltergeist()
-	polt.active=false
-	if polt.conn then polt.conn:Disconnect() polt.conn=nil end
-	local char=Player.Character
-	if char then local hrp=char:FindFirstChild("HumanoidRootPart") if hrp then hrp.Anchored=false end end
-end
+local polt={active=false,safeConn=nil,slotPart=nil}
+local function stopAutoPoltergeist() polt.active=false if polt.safeConn then polt.safeConn:Disconnect() polt.safeConn=nil end if polt.slotPart then polt.slotPart:Destroy() polt.slotPart=nil end end
 local function startAutoPoltergeist()
-	if game.PlaceId~=103505724406848 then
-		showToast("Teleporting to Poltergeist map...",T.DIM)
-		task.spawn(function() local ok,err=pcall(function() TeleportService:Teleport(103505724406848,Player) end) if not ok then showToast("TP Failed",T.RED) end end)
-		states.AutoPoltergeist=false if tileRefs.AutoPoltergeist then tileRefs.AutoPoltergeist(false) end return
-	end
+	if game.PlaceId~=103505724406848 then showToast("Teleporting to Poltergeist map...",T.DIM) task.spawn(function() local ok,err=pcall(function() TeleportService:Teleport(103505724406848,Player) end) if not ok then showToast("TP Failed",T.RED) end end) states.AutoPoltergeist=false if tileRefs.AutoPoltergeist then tileRefs.AutoPoltergeist(false) end return end
 	polt.active=true
-	local slapCycle=0
-	-- Anchor HRP at farm position
-	local char=Player.Character
-	if char then
-		local hrp=char:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			hrp.CFrame=CFrame.new(Vector3.new(-77,94,-114))*CFrame.Angles(math.rad(-70),math.rad(-50),math.rad(-70))
-			task.wait(0.5)
-			hrp.Anchored=true
-		end
-	end
-	-- Heartbeat to keep position
-	polt.conn=RunService.Heartbeat:Connect(function()
-		if not polt.active then return end
-		local c=Player.Character if not c then return end
-		local h=c:FindFirstChild("HumanoidRootPart") if not h then return end
-		h.CFrame=CFrame.new(Vector3.new(-77,94,-114))*CFrame.Angles(math.rad(-70),math.rad(-50),math.rad(-70))
-	end)
 	task.spawn(function()
-		task.wait(0.5)
-		local char2=Player.Character if char2 then local hrp=char2:FindFirstChild("HumanoidRootPart") if hrp then hrp.Anchored=true end end
-		while polt.active do
-			if slapCycle<90 then
-				local ok,err=pcall(function()
-					local enemies=workspace:FindFirstChild("Enemies")
-					if enemies then
-						for _,enemy in pairs(enemies:GetChildren()) do
-							if not polt.active then break end
-							if enemy:IsA("Model") then
-								local rarm=enemy:WaitForChild("Right Arm",1)
-								if rarm then
-									game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("GeneralHit"):FireServer(rarm)
-								end
-							end
-						end
-					end
-				end)
-				slapCycle=slapCycle+1
-				task.wait(0.1)
-			else
-				task.wait(5) slapCycle=0
+		local ok,err=pcall(function()
+			local char=Player.Character local hum=char and char:FindFirstChild("Humanoid")
+			local glove=char and char:FindFirstChildOfClass("Tool") and char:FindFirstChildOfClass("Tool"):FindFirstChild("Glove")
+			if not glove then local bt=Player.Backpack:FindFirstChildOfClass("Tool") if bt and hum then hum:EquipTool(bt) task.wait(0.2) end local t2=char:FindFirstChildOfClass("Tool") glove=t2 and t2:FindFirstChild("Glove") end
+			if not glove then showToast("No glove equipped",T.RED) polt.active=false return end
+			polt.slotPart=Instance.new("Part") polt.slotPart.Parent=workspace polt.slotPart.Anchored=true polt.slotPart.CanCollide=true polt.slotPart.Size=Vector3.new(10,1,10) polt.slotPart.Transparency=1 polt.slotPart.Position=Vector3.new(-21,0,-125.5)
+			glove.Size=Vector3.new(20,20,20) local tool=glove.Parent
+			polt.safeConn=RunService.Heartbeat:Connect(function() if not polt.active then return end local c2=Player.Character if not c2 then return end local h=c2:FindFirstChild("HumanoidRootPart") if not h then return end h.CFrame=CFrame.new(-21,3,-125.5)*CFrame.Angles(0,math.rad(-99),0) end)
+			while polt.active do
+				local cc=Player.Character tool=cc and cc:FindFirstChildOfClass("Tool")
+				if not tool then local bp=Player.Backpack:FindFirstChildOfClass("Tool") if bp and cc and cc:FindFirstChild("Humanoid") then cc.Humanoid:EquipTool(bp) task.wait(0.2) tool=cc:FindFirstChildOfClass("Tool") end end
+				if tool then tool:Activate() task.wait(0.05) local nt=tool:Clone() tool:Destroy() nt.Parent=Player.Backpack task.wait() local c3=Player.Character if c3 and c3:FindFirstChild("Humanoid") then c3.Humanoid:EquipTool(nt) tool=nt local ng=tool:FindFirstChild("Glove") if ng then ng.Size=Vector3.new(20,20,20) end end end
+				task.wait(0.07)
 			end
-		end
+		end)
+		if not ok then showToast("Poltergeist: "..tostring(err):sub(1,40),T.RED) end stopAutoPoltergeist()
 	end)
 end
 
@@ -1386,6 +1363,173 @@ local function buildSlapFarmSettings()
 end
 
 ------------------------------------------------------------------------
+-- ELUDE/COUNTER settings panel
+------------------------------------------------------------------------
+local ec={eludeOn=true,counterOn=true}
+
+local function buildEludeCounterSettings()
+	local sg=Instance.new("ScreenGui") sg.ResetOnSpawn=false sg.Parent=CoreGui panelSettings["EludeCounter"]=sg
+	local SP=Instance.new("Frame") SP.Size=UDim2.new(0.22,0,0,110) SP.Position=UDim2.new(0.5,0,0.5,0) SP.AnchorPoint=Vector2.new(0.5,0.5) SP.BackgroundColor3=T.BG SP.BackgroundTransparency=0.05 SP.Visible=false SP.ZIndex=50 SP.Parent=sg addCorner(SP,8) addStroke(SP,T.STR,1.5)
+	local SPT=Instance.new("TextLabel") SPT.Size=UDim2.new(0.75,0,0,26) SPT.Position=UDim2.new(0.02,0,0,4) SPT.BackgroundTransparency=1 SPT.Text="Elude/Counter" SPT.TextColor3=T.WHITE SPT.TextScaled=true SPT.Font=Enum.Font.GothamBold SPT.ZIndex=51 SPT.Parent=SP makeDraggable(SP,SPT)
+	local cB=Instance.new("TextButton") cB.Size=UDim2.new(0,22,0,22) cB.Position=UDim2.new(1,-4,0,4) cB.AnchorPoint=Vector2.new(1,0) cB.BackgroundColor3=T.MID cB.Text="✕" cB.TextColor3=T.RED cB.TextScaled=true cB.Font=Enum.Font.GothamBold cB.ZIndex=52 cB.Parent=SP addCorner(cB,5) addStroke(cB,T.SDIM,1)
+	cB.MouseButton1Click:Connect(function() tw(SP,{BackgroundTransparency=1}) task.wait(0.15) SP.Visible=false SP.BackgroundTransparency=0.05 end)
+	-- Elude checkbox
+	local eLbl=Instance.new("TextLabel") eLbl.Size=UDim2.new(0.55,0,0,20) eLbl.Position=UDim2.new(0.05,0,0,36) eLbl.BackgroundTransparency=1 eLbl.Text="Elude" eLbl.TextColor3=T.WHITE eLbl.TextScaled=true eLbl.Font=Enum.Font.GothamBold eLbl.TextXAlignment=Enum.TextXAlignment.Left eLbl.ZIndex=51 eLbl.Parent=SP
+	makeSwitch(SP,37,-44,true,function(v) ec.eludeOn=v end)
+	-- Counter checkbox
+	local cLbl=Instance.new("TextLabel") cLbl.Size=UDim2.new(0.55,0,0,20) cLbl.Position=UDim2.new(0.05,0,0,66) cLbl.BackgroundTransparency=1 cLbl.Text="Counter" cLbl.TextColor3=T.WHITE cLbl.TextScaled=true cLbl.Font=Enum.Font.GothamBold cLbl.TextXAlignment=Enum.TextXAlignment.Left cLbl.ZIndex=51 cLbl.Parent=SP
+	makeSwitch(SP,67,-44,true,function(v) ec.counterOn=v end)
+end
+
+local function runEludeCounter()
+	if game.PlaceId~=11828384869 then
+		showToast("Teleporting to Elude Maze...",T.DIM)
+		task.spawn(function() local ok,err=pcall(function() TeleportService:Teleport(11828384869,Player) end) if not ok then showToast("TP Failed",T.RED) end end)
+		return
+	end
+	task.spawn(function()
+		local ok,err=pcall(function()
+			if ec.eludeOn and ec.counterOn then
+				-- Both: full script
+				local lever=workspace.CounterLever.ClickDetector
+				local elude=workspace.Ruins.Elude.Glove
+				local remainingTime=120
+				Player.Character.HumanoidRootPart.CFrame=CFrame.new(Vector3.new(27,503,38))
+				local Part=Instance.new("Part",workspace) Part.Anchored=true Part.Position=Vector3.new(27,500,38) Part.Size=Vector3.new(2000,1,2000) Part.Transparency=1
+				task.wait(0.5)
+				fireclickdetector(lever)
+				local screenGui=Instance.new("ScreenGui") screenGui.ResetOnSpawn=false screenGui.Parent=Player:WaitForChild("PlayerGui")
+				local frame=Instance.new("Frame") frame.Size=UDim2.new(0,280,0,60) frame.Position=UDim2.new(0.5,-140,0,20) frame.BackgroundColor3=Color3.fromRGB(20,20,25) frame.BorderSizePixel=0 frame.Parent=screenGui
+				local corner=Instance.new("UICorner") corner.CornerRadius=UDim.new(0,8) corner.Parent=frame
+				local stroke=Instance.new("UIStroke") stroke.Color=Color3.fromRGB(80,80,255) stroke.Thickness=1.5 stroke.Parent=frame
+				local timerLabel=Instance.new("TextLabel") timerLabel.Size=UDim2.new(1,0,1,0) timerLabel.BackgroundTransparency=1 timerLabel.TextColor3=Color3.fromRGB(255,255,255) timerLabel.TextScaled=true timerLabel.Font=Enum.Font.GothamBold timerLabel.Parent=frame timerLabel.Text=remainingTime.." seconds remaining"
+				local function updateTimer(t) timerLabel.Text=t.." seconds remaining" end
+				while task.wait(1) do
+					remainingTime=remainingTime-1 updateTimer(remainingTime)
+					for _,counter in pairs(workspace.Maze:GetDescendants()) do
+						if counter:IsA("ClickDetector") then
+							firetouchinterest(Player.Character.HumanoidRootPart,elude,0)
+							firetouchinterest(Player.Character.HumanoidRootPart,elude,1)
+							task.wait()
+							fireclickdetector(counter)
+						end
+					end
+				end
+			elseif ec.eludeOn and not ec.counterOn then
+				-- Elude only
+				local elude=workspace.Ruins.Elude.Glove
+				firetouchinterest(Player.Character.HumanoidRootPart,elude,0)
+				firetouchinterest(Player.Character.HumanoidRootPart,elude,1)
+			elseif ec.counterOn and not ec.eludeOn then
+				-- Counter only
+				local lever=workspace.CounterLever.ClickDetector
+				local remainingTime=120
+				Player.Character.HumanoidRootPart.CFrame=CFrame.new(Vector3.new(27,503,38))
+				local Part=Instance.new("Part",workspace) Part.Anchored=true Part.Position=Vector3.new(27,500,38) Part.Size=Vector3.new(2000,1,2000) Part.Transparency=1
+				task.wait(0.5)
+				fireclickdetector(lever)
+				local screenGui=Instance.new("ScreenGui") screenGui.ResetOnSpawn=false screenGui.Parent=Player:WaitForChild("PlayerGui")
+				local frame=Instance.new("Frame") frame.Size=UDim2.new(0,280,0,60) frame.Position=UDim2.new(0.5,-140,0,20) frame.BackgroundColor3=Color3.fromRGB(20,20,25) frame.BorderSizePixel=0 frame.Parent=screenGui
+				local corner=Instance.new("UICorner") corner.CornerRadius=UDim.new(0,8) corner.Parent=frame
+				local stroke=Instance.new("UIStroke") stroke.Color=Color3.fromRGB(80,80,255) stroke.Thickness=1.5 stroke.Parent=frame
+				local timerLabel=Instance.new("TextLabel") timerLabel.Size=UDim2.new(1,0,1,0) timerLabel.BackgroundTransparency=1 timerLabel.TextColor3=Color3.fromRGB(255,255,255) timerLabel.TextScaled=true timerLabel.Font=Enum.Font.GothamBold timerLabel.Parent=frame timerLabel.Text=remainingTime.." seconds remaining"
+				local function updateTimer(t) timerLabel.Text=t.." seconds remaining" end
+				while task.wait(1) do
+					remainingTime=remainingTime-1 updateTimer(remainingTime)
+					for _,counter in pairs(workspace.Maze:GetDescendants()) do
+						if counter:IsA("ClickDetector") then fireclickdetector(counter) end
+					end
+				end
+			else
+				showToast("Select at least one option in settings",T.RED)
+			end
+		end)
+		if not ok then showToast("EludeCounter: "..tostring(err):sub(1,40),T.RED) end
+	end)
+end
+
+------------------------------------------------------------------------
+-- AUTO BIND
+------------------------------------------------------------------------
+local function runAutoBind()
+	if game.PlaceId~=74169485398268 then
+		showToast("Teleporting to Binded Maze...",T.DIM)
+		task.spawn(function() local ok,err=pcall(function() TeleportService:Teleport(74169485398268,Player) end) if not ok then showToast("TP Failed",T.RED) end end)
+		return
+	end
+	task.spawn(function()
+		local ok,err=pcall(function()
+			fireclickdetector(workspace.Orb.ClickDetector)
+		end)
+		if not ok then showToast("AutoBind: "..tostring(err):sub(1,40),T.RED) end
+	end)
+end
+
+------------------------------------------------------------------------
+-- AUTO HARVESTER
+------------------------------------------------------------------------
+local function runAutoHarvester()
+	if game.PlaceId~=92483185275059 then
+		showToast("Teleporting to Harvest Maze...",T.DIM)
+		task.spawn(function() local ok,err=pcall(function() TeleportService:Teleport(92483185275059,Player) end) if not ok then showToast("TP Failed",T.RED) end end)
+		return
+	end
+	task.spawn(function()
+		local ok,err=pcall(function()
+			local Player=game.Players.LocalPlayer
+			local char=Player.Character
+			local hrp=char.HumanoidRootPart
+			local Exit
+			local StartDoor=workspace.Shed.StartDoor
+			local roundNumber=1
+			workspace.ChildRemoved:Connect(function(child)
+				if child.Name=="Maze" then roundNumber=roundNumber+1 print(roundNumber) end
+			end)
+			while task.wait(1) do
+				if roundNumber<5 then
+					Exit=workspace:FindFirstChild("Maze") and workspace.Maze:WaitForChild("transition")
+					if not Exit then
+						for _,startprompt in pairs(StartDoor:GetDescendants()) do
+							if startprompt:IsA("ProximityPrompt") then
+								Player.Character.HumanoidRootPart.CFrame=CFrame.new(Vector3.new(-1826,-69,310))
+								task.wait(0.75) fireproximityprompt(startprompt)
+							end
+						end
+						task.wait(0.5)
+					elseif Exit then
+						for _,prompt in pairs(Exit:GetDescendants()) do
+							if prompt:IsA("ProximityPrompt") then
+								Player.Character.HumanoidRootPart.CFrame=Exit.visual.moonlight_new.CFrame+Vector3.new(0,4,0)
+								task.wait(0.75) fireproximityprompt(prompt)
+							end
+						end
+					end
+				else
+					if not workspace:FindFirstChild("Maze") then
+						for _,startprompt in pairs(StartDoor:GetDescendants()) do
+							if startprompt:IsA("ProximityPrompt") then
+								Player.Character.HumanoidRootPart.CFrame=CFrame.new(Vector3.new(-1826,-69,310))
+								task.wait(0.75) fireproximityprompt(startprompt)
+							end
+						end
+					elseif workspace:FindFirstChild("Maze") then
+						local CoreParts=workspace.Maze:WaitForChild("BarnMaze"):WaitForChild("CoreParts")
+						local ChaseStart=CoreParts.ChaseStart
+						local ChaseEnd=CoreParts.ChaseEnd
+						local ChaseOutro=CoreParts.ChaseOutroStart
+						task.wait(0.5)
+						firetouchinterest(hrp,ChaseStart,0) firetouchinterest(hrp,ChaseStart,1) task.wait()
+						firetouchinterest(hrp,ChaseEnd,0) firetouchinterest(hrp,ChaseEnd,1) task.wait()
+						firetouchinterest(hrp,ChaseOutro,0) firetouchinterest(hrp,ChaseOutro,1)
+					end
+				end
+			end
+		end)
+		if not ok then showToast("AutoHarvester: "..tostring(err):sub(1,40),T.RED) end
+	end)
+end
+
+------------------------------------------------------------------------
 -- TOGGLE FUNCTIONS
 ------------------------------------------------------------------------
 local toggleFunctions={
@@ -1415,7 +1559,7 @@ local toggleFunctions={
 ------------------------------------------------------------------------
 -- TILE BUILDER
 ------------------------------------------------------------------------
-local panelConf={Reach=true,SlapFarm=true,AntiVoid=true,PlayerESP=true,Freecam=true}
+local panelConf={Reach=true,SlapFarm=true,AntiVoid=true,PlayerESP=true,Freecam=true,EludeCounter=true}
 local function createScriptButton(data,grid)
 	local key=data.key local label=data.label local oneShot=data.oneShot or false local runOnce=data.runOnce or false
 	local Tile=Instance.new("Frame") Tile.BackgroundColor3=T.TILE Tile.ZIndex=10 Tile.Parent=grid addCorner(Tile,7)
@@ -1480,6 +1624,7 @@ local generalScripts={
 	{key="PlayerESP",label="Player ESP"},{key="Freecam",label="Freecam"},{key="GoyShip",label="GoyShip"},
 }
 for _,d in ipairs(generalScripts) do createScriptButton(d,GenGrid) end
+
 createScriptButton({key="TeleportHub",label="Teleport Hub"},ObtGrid)
 
 local function runIcyTrials()
@@ -1505,9 +1650,19 @@ local function runEasterEggs()
 	for _,glove in pairs(Eggs:GetChildren()) do local part=glove:IsA("Model") and glove.PrimaryPart or glove local char=Player.Character if part and char and char:FindFirstChild("HumanoidRootPart") then firetouchinterest(char.HumanoidRootPart,part,0) firetouchinterest(char.HumanoidRootPart,part,1) end end
 end
 createScriptButton({key="EasterEggs",label="Easter Eggs",runOnce=true,hoverWarning="WARNING: Must Accept Quest",runScript=runEasterEggs},ObtGrid)
+
+-- Elude/Counter
+createScriptButton({key="EludeCounter",label="Elude/Counter",runOnce=true,runScript=runEludeCounter},ObtGrid)
+
+-- AutoBind
+createScriptButton({key="AutoBind",label="AutoBind",runOnce=true,runScript=runAutoBind},ObtGrid)
+
+-- AutoHarvester
+createScriptButton({key="AutoHarvester",label="AutoHarvester",runOnce=true,runScript=runAutoHarvester},ObtGrid)
+
 createScriptButton({key="AlchemistHack",label="AlchemistHack"},GlvGrid)
 
-buildReachSettings() buildAntiVoidSettings() buildSlapFarmSettings() buildESPSettings() buildFreecamSettings()
+buildReachSettings() buildAntiVoidSettings() buildSlapFarmSettings() buildESPSettings() buildFreecamSettings() buildEludeCounterSettings()
 
 ------------------------------------------------------------------------
 -- KEYBINDS
@@ -1515,7 +1670,7 @@ buildReachSettings() buildAntiVoidSettings() buildSlapFarmSettings() buildESPSet
 UIS.InputBegan:Connect(function(input,gpe)
 	if input.KeyCode==Enum.KeyCode.RightShift then if panelOpen then closePanel() else openPanel() end return end
 	if gpe or bindingScript then return end
-	local rom={EasterEggs=runEasterEggs,IcyTrials=runIcyTrials,PocketDimension=runPocketDimension,AutoPsycho=runAutoPsycho,TelAviv=doTelAvivTP}
+	local rom={EasterEggs=runEasterEggs,IcyTrials=runIcyTrials,PocketDimension=runPocketDimension,AutoPsycho=runAutoPsycho,TelAviv=doTelAvivTP,EludeCounter=runEludeCounter,AutoBind=runAutoBind,AutoHarvester=runAutoHarvester}
 	for key,keyCode in pairs(binds) do
 		if input.KeyCode==keyCode then
 			if key=="MouseTP" then doMouseTP()

@@ -1144,14 +1144,14 @@ local alch={active=false,gui=nil,char=Player.Character or Player.CharacterAdded:
 alch.hrp=alch.char:WaitForChild("HumanoidRootPart")
 Player.CharacterAdded:Connect(function(nc) alch.char=nc alch.hrp=nc:WaitForChild("HumanoidRootPart") end)
 local POTIONS={
-	{name="Stun Potion",effect="Stuns player",ingredients={"2x Plane Flower"}},{name="Explosion Potion",effect="Explodes on impact",ingredients={"2x Fire Flower","1x Red Crystal"}},
+	{name="Paralyze Potion",effect="Stuns player",ingredients={"2x Plane Flower"}},{name="Explosion Potion",effect="Explodes on impact",ingredients={"2x Fire Flower","1x Red Crystal"}},
 	{name="Nightmare Potion",effect="Nightmare effect",ingredients={"3x Dark Root"}},{name="Grug Potion",effect="Grug effect",ingredients={"1x Mushroom"}},
-	{name="Speed Potion",effect="Increases walkspeed",ingredients={"1x Jade Stone","1x Autumn Sprout"}},{name="Transparency Potion",effect="Makes invisible",ingredients={"2x Hazel Lily","1x Blue Crystal"}},
+	{name="Haste Potion",effect="Increases slap speed",ingredients={"1x Jade Stone","1x Autumn Sprout"}},{name="Invisibility Potion",effect="Makes invisible",ingredients={"2x Hazel Lily","1x Blue Crystal"}},
 	{name="Confusion Potion",effect="Confuses player",ingredients={"1x Red Crystal","1x Blue Crystal","1x Glowing Mushroom"}},{name="Strength Potion",effect="Increases strength",ingredients={"1x Dire Flower","1x Red Crystal","1x Wild Vine"}},
-	{name="Speed Potion (Alt)",effect="Increases walkspeed",ingredients={"2x Mushroom","1x Plane Flower","1x Hazel Lily","1x Blue Crystal"}},{name="Frozen Potion",effect="Freezes player",ingredients={"2x Winter Rose","1x Wild Vine","1x Blue Crystal","1x Glowing Mushroom"}},
-	{name="Poison Potion",effect="Applies poison",ingredients={"2x Dark Root","1x Blood Rose","1x Red Crystal"}},{name="Invincibility Potion",effect="Grants invincibility",ingredients={"1x Elder Wood","2x Mushroom"}},
-	{name="Instant Death Potion",effect="Instantly kills",ingredients={"10x Dark Root","10x Blood Rose"}},{name="Slowdown Potion",effect="Slows player",ingredients={"2x Mushroom","2x Blue Crystal","1x Jade Stone","1x Plane Flower"}},
-	{name="Detox Potion",effect="Removes negative effects",ingredients={"1x Blue Crystal","1x Glowing Mushroom","2x Plane Flower","1x Elder Wood"}},{name="Feather Potion",effect="Lowers gravity",ingredients={"1x Mushroom","1x Hazel Lily"}},
+	{name="Speed Potion",effect="Increases walkspeed",ingredients={"2x Mushroom","1x Plane Flower","1x Hazel Lily","1x Blue Crystal"}},{name="Freeze Potion",effect="Freezes player",ingredients={"2x Winter Rose","1x Wild Vine","1x Blue Crystal","1x Glowing Mushroom"}},
+	{name="Plague Potion",effect="Applies plague effect",ingredients={"2x Dark Root","1x Blood Rose","1x Red Crystal"}},{name="Invincibility Potion",effect="Grants invincibility",ingredients={"1x Elder Wood","2x Mushroom"}},
+	{name="Lethal Potion",effect="Instantly kills",ingredients={"10x Dark Root","10x Blood Rose"}},{name="Slowness Potion",effect="Slows player",ingredients={"2x Mushroom","2x Blue Crystal","1x Jade Stone","1x Plane Flower"}},
+	{name="Anti-Toxin Potion",effect="Removes negative effects",ingredients={"1x Blue Crystal","1x Glowing Mushroom","2x Plane Flower","1x Elder Wood"}},{name="Feather Potion",effect="Lowers gravity",ingredients={"1x Mushroom","1x Hazel Lily"}},
 	{name="Corrupted Vine Potion",effect="For Druid glove",ingredients={"3x Wild Vine","1x Blood Rose","1x Elder Wood","1x Dark Root","1x Jade Stone"}},{name="Fallen Field Potion",effect="Unknown effect",ingredients={"2x Plane Flower","1x Hazel Lily"}},
 	{name="Lost Potion",effect="Unknown effect",ingredients={"3x Elder Wood","1x Blue Crystal","1x Red Crystal"}},
 }

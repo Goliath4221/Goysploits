@@ -24,30 +24,9 @@ Click the **"Get Script"** button on our official website, https://goysploits.rf
 
 ### 2. Execution Setup
 1. Launch your preferred executor platform.
-2. Open a **Clean Tab** inside your execution environment.
+2. Open a **Clean Tab** inside your executor.
 3. **Paste** the copied loadstring block into your console box.
 4. Press **Execute** to run.
-
----
-
-## 📸 Interface Preview
-
-<p align="center">
-  <!-- Replace this layout path with a screenshot of your active interface later -->
-  <img src="https://placeholder.com" alt="Interface Layout Menu Preview" width="100%">
-</p>
-
----
-
-## 🛠️ Performance Changelog
-
-### Version 1.4.2 (Latest Update)
-* Fixed internal script crashes regarding raw data loading streams.
-* Tweaked overall color scheme logic.
-* Upgraded copy feedback performance constraints.
-
-### Version 1.4.0
-* Initial release of the core execution structure.
 
 ---
 
